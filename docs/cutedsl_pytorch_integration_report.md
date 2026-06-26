@@ -31,6 +31,50 @@ Use this index when cross-checking the RFC against upstream PyTorch code and rev
 | Inductor template support is a separate compiler integration surface. | `torch/_inductor/codegen/cutedsl/*`, `torch/_inductor/async_compile.py`, `pytorch/pytorch#160108` |
 | External kernel ownership is preferred over large in-tree kernel dumps. | `pytorch/pytorch#177553`, `torch/_vendor/quack/*` discussion history |
 
+## Reading Guide
+
+For a reviewer who wants to connect this report to concrete code, the fastest path is:
+
+| Step | Read | What to look for |
+|---:|---|---|
+| 1 | PyTorch: `torch/_native/README.md` | The core contract: `cond` / `impl`, no runtime import during registration, fallback through the router, FakeTensor-safe predicates, and OpInfo expectations. |
+| 2 | PyTorch: `torch/_native/cutedsl_utils.py` | How an optional DSL runtime is discovered through package metadata/spec checks without importing the runtime. |
+| 3 | PyTorch: `torch/_native/ops/topk/cutedsl_impl.py` | A compact native adapter pattern: cheap eligibility check, lazy kernel import, and schema-compatible wrapper. |
+| 4 | PyTorch: `torch/backends/python_native/__init__.py` | How users enable, disable, inspect, or reorder Python-native DSL overrides. |
+| 5 | PyTorch: `aten/src/ATen/native/native_functions.yaml` | The RMSNorm schemas: `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
+| 6 | PyTorch: `torch/_inductor/codegen/cutedsl/*` | The compiler-side template shape that FlyDSL should mirror later, not in the first PR. |
+| 7 | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | How FlyDSL exposes `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, and launch configuration. |
+| 8 | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing RMSNorm correctness, dtype, shape, and benchmark scaffolding for the proposed MVP. |
+
+The most important PyTorch README rule can be reduced to this adapter skeleton:
+
+```python
+def _cond(*args, **kwargs) -> bool:
+    # Cheap dtype / shape / layout / backend checks only.
+    return True
+
+
+def _impl(*args, **kwargs):
+    from .dsl_kernel_module import kernel  # lazy import
+
+    return kernel(*args, **kwargs)
+
+
+def register_to_dispatch():
+    op_symbol = "rms_norm"
+    dispatch_key = "CUDA"  # PyTorch also uses this key for HIP/ROCm tensors.
+
+    dsl_utils.register_op_override(
+        "aten",
+        op_symbol,
+        dispatch_key,
+        cond=_cond,
+        impl=_impl,
+    )
+```
+
+FlyDSL should copy this shape, not the CUDA-specific details around CUTLASS/CuteDSL.
+
 ## Code Map
 
 ### Native / Eager Files
@@ -124,6 +168,17 @@ sequenceDiagram
 | `register_to_dispatch()` | Calls `cutedsl_utils.register_op_override(...)`. |
 
 The important pattern is not TopK itself. It is the split between **cheap eligibility** and **lazy runtime import**.
+
+### RMSNorm Evidence
+
+RMSNorm is a better first FlyDSL native candidate than a generic GEMM or compiler template because PyTorch already has a narrow schema and existing DSL-facing test precedent.
+
+| Evidence | Why it matters for FlyDSL |
+|---|---|
+| `aten/src/ATen/native/native_functions.yaml` defines `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. | The first PR can choose an existing aten surface instead of proposing a new public operator. |
+| `torch/testing/_internal/common_methods_invocations.py` has `sample_inputs_rms_norm_cutedsl`. | PyTorch already has a pattern for DSL-specific RMSNorm OpInfo inputs. |
+| FlyDSL has `tests/kernels/test_rmsnorm.py`. | The FlyDSL side already has correctness and benchmark scaffolding to turn into a support matrix. |
+| RMSNorm has a small output contract compared with GEMM/MoE templates. | Native/eager integration can validate optional runtime behavior before taking on Inductor autotune and scheduling. |
 
 ## Inductor Template Path
 

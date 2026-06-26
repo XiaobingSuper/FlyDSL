@@ -73,6 +73,23 @@ CuteDSL currently uses this architecture for CUDA:
 | Compiler | `torch/_inductor/codegen/cutedsl/*` | `torch/_inductor/codegen/flydsl/*` later |
 | Validation | `install_cutlass_dsl`, smoke tests, OpInfo | `install_flydsl`, smoke tests, OpInfo |
 
+### Reference Material
+
+These files are useful companion reads when reviewing or implementing this RFC:
+
+| Topic | Reference | Why it helps |
+|---|---|---|
+| PyTorch native DSL contract | PyTorch: `torch/_native/README.md` | Defines `cond` / `impl`, lazy imports, FakeTensor constraints, logging, and OpInfo expectations. |
+| PyTorch DSL registry | PyTorch: `torch/_native/dsl_registry.py`, `torch/_native/registry.py` | Shows how DSL availability and dispatcher override routing are represented. |
+| User controls | PyTorch: `torch/backends/python_native/__init__.py` | Shows the shared `torch.backends.python_native.<dsl>` control surface. |
+| RMSNorm schemas | PyTorch: `aten/src/ATen/native/native_functions.yaml` | Shows `aten.rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
+| CuteDSL native adapters | PyTorch: `torch/_native/ops/topk/cutedsl_impl.py`, `torch/_native/ops/scatter_add/cutedsl_impl.py` | Concrete examples of cheap predicates plus lazy runtime imports. |
+| CuteDSL RMSNorm OpInfo | PyTorch: `torch/testing/_internal/common_methods_invocations.py` | Shows the existing CuteDSL RMSNorm sample-input pattern. |
+| CuteDSL compiler templates | PyTorch: `torch/_inductor/codegen/cutedsl/*`, `torch/_inductor/async_compile.py` | Interface-level model for a future FlyDSL Inductor path. |
+| FlyDSL kernel authoring | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | Shows `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, launch shape, and cache behavior. |
+| FlyDSL RMSNorm coverage | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing correctness and benchmark shape source for the proposed MVP op. |
+| FlyDSL test and benchmark flow | FlyDSL: `docs/testing_benchmarking_guide.md` | Explains GPU kernel tests, selective benchmark execution, and expected output format. |
+
 ## Proposed Implementation
 
 This RFC proposes one architecture with staged implementation. The first PRs should establish the control and native planes. The compiler plane is part of the design, but should be implemented after the native path proves package and kernel stability.
@@ -197,7 +214,7 @@ MVP native operator: RMSNorm.
 
 | Candidate | Reason |
 |---|---|
-| RMSNorm | Primary MVP. Existing FlyDSL kernel, simple output contract, and similar review surface to prior CuteDSL normalization work. |
+| RMSNorm | Primary MVP. PyTorch already has `aten.rms_norm` / `_fused_rms_norm`, CuteDSL already has RMSNorm OpInfo coverage, and FlyDSL already has `tests/kernels/test_rmsnorm.py`. |
 | LayerNorm | Backup candidate if RMSNorm forward/backward API or benchmark evidence is not ready. |
 
 Initial predicate policy:
@@ -233,6 +250,54 @@ FlyDSL responsibilities:
 - Provide stable wrapper functions callable by PyTorch adapters.
 - Own kernel code, tuning, ROCm arch handling, and cache behavior.
 - Document supported dtype/shape/layout/arch combinations.
+
+Illustrative native adapter shape:
+
+```python
+# torch/_native/ops/norm/flydsl_impl.py
+# NOTE: illustrative only; final signature must match the selected aten schema.
+import torch
+
+from ... import flydsl_utils as fu
+
+_RMSNORM_OP = "rms_norm"
+_SUPPORTED_HIDDEN_SIZES = {128, 256, 512, 1024, 2048, 4096, 8192}
+
+
+def _cond(input, normalized_shape, weight=None, eps=None) -> bool:
+    if len(normalized_shape) != 1:
+        return False
+
+    hidden_size = int(normalized_shape[0])
+    return (
+        fu.runtime_available()
+        and torch.version.hip is not None
+        and input.is_cuda
+        and input.dtype in (torch.float16, torch.bfloat16)
+        and input.is_contiguous()
+        and input.shape[-1] == hidden_size
+        and hidden_size in _SUPPORTED_HIDDEN_SIZES
+    )
+
+
+def _impl(input, normalized_shape, weight=None, eps=None):
+    from flydsl.torch import rmsnorm  # lazy runtime import
+
+    return rmsnorm(input, normalized_shape, weight, eps)
+
+
+def register_to_dispatch() -> None:
+    fu.register_op_override(
+        "aten",
+        _RMSNORM_OP,
+        "CUDA",
+        cond=_cond,
+        impl=_impl,
+    )
+```
+
+The key points are the same as `torch/_native/README.md`: `cond` is cheap and schema-compatible, `_impl` lazily imports FlyDSL, and unsupported cases are handled by returning `False` from `_cond`. If the first implementation chooses `_fused_rms_norm` instead of `rms_norm`, the adapter must also cover the fused op's tuple output and backward/autograd contract.
+The dispatch key string remains `"CUDA"` because PyTorch uses the CUDA backend key for both CUDA and HIP/ROCm tensor backends; ROCm-specific behavior is gated by `torch.version.hip is not None` and architecture predicates.
 
 ### Compiler / Inductor Plane
 
@@ -413,6 +478,20 @@ The first RMSNorm PR should include benchmark evidence before enabling the overr
 2. Which `gfx` targets should be considered supported in the first RMSNorm PR?
 3. Should FlyDSL provide a small stable `flydsl.torch` adapter package for PyTorch-facing wrappers?
 4. When should `FLYDSL` appear in Inductor config: after the first template lands, or earlier behind an experimental flag?
+
+## Implementation Checklist
+
+Before opening the first PyTorch PR, the implementation should be able to answer:
+
+| Check | Expected answer |
+|---|---|
+| Import safety | `import torch` does not import `flydsl`, initialize ROCm, or query device properties. |
+| Optional dependency | Missing or unsupported FlyDSL leaves PyTorch behavior unchanged. |
+| User rollback | `torch.backends.python_native.flydsl.enabled = False` restores aten behavior. |
+| First op schema | The adapter names the exact aten op, overload, outputs, and autograd behavior. |
+| Support matrix | Enabled dtype, shape, layout, and `gfx` targets match tested FlyDSL coverage. |
+| Correctness | Supported RMSNorm cases match aten/reference within documented tolerance. |
+| Performance | Benchmarks separate first-run compile cost from warm-cache runtime. |
 
 ## Resolution / Next Steps
 
