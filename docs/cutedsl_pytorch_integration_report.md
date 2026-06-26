@@ -108,14 +108,26 @@ Use this as the compact mental model:
 
 ```mermaid
 flowchart LR
-    A["Control"] --> B["Native"]
-    A --> C["Compiler"]
-    B --> D["Kernels"]
-    C --> D
-    D --> E["Runtime"]
+    A["Control"] -->|enables| B["Native"]
+    A -->|configures| C["Compiler"]
+    B -->|calls| D["Kernels"]
+    C -->|calls| D
+    D -->|imports| E["Runtime"]
 ```
 
 The key point is that the same DSL identity, `cutedsl`, is shared by user controls, native overrides, tests, and compiler paths.
+
+How to read the diagram:
+
+| Node | Concrete CuteDSL surface | What the arrow means |
+|---|---|---|
+| Control | `dsl_registry`, `python_native`, `cutedsl_utils.py` | PyTorch knows the DSL name and can enable/disable it without importing the runtime. |
+| Native | `torch/_native/registry.py`, op adapters | Eager calls may route to CuteDSL when a cheap predicate matches. |
+| Compiler | `torch/_inductor/codegen/cutedsl/*` | `torch.compile` may generate a CuteDSL template path separately from eager routing. |
+| Kernels | QuACK / CuteDSL kernel wrappers | Native and compiler paths both eventually call external kernel code. |
+| Runtime | `nvidia-cutlass-dsl`, TVM FFI, cache helpers | Runtime import/compile happens late, not during `import torch`. |
+
+What this diagram does not mean: native overrides and Inductor templates are not the same implementation. They share the DSL identity and dependency policy, but they are separate review surfaces.
 
 ## Native / Eager Path
 
@@ -128,6 +140,7 @@ sequenceDiagram
     participant Router as native override router
     participant Cond as CuteDSL cond
     participant Impl as CuteDSL impl
+    participant Kernel as CuteDSL kernel
     participant Aten as original aten CUDA kernel
 
     User->>Dispatcher: aten op
@@ -136,13 +149,23 @@ sequenceDiagram
     alt eligible
         Cond-->>Router: true
         Router->>Impl: adapter
-        Impl-->>User: result
+        Impl->>Kernel: lazy import
+        Kernel-->>User: result
     else unsupported
         Cond-->>Router: false
         Router->>Aten: fallback
         Aten-->>User: result
     end
 ```
+
+Runtime flow interpretation:
+
+| Step | Code responsibility | FlyDSL lesson |
+|---|---|---|
+| `Dispatcher -> Router` | PyTorch installs a router for the target aten op and backend key. | FlyDSL should use the same generic router instead of a custom dispatch path. |
+| `Router -> Cond` | The adapter checks dtype, shape, layout, backend, deterministic mode, and architecture cheaply. | FlyDSL predicates should avoid expensive runtime or device queries. |
+| `Router -> Impl` | The implementation runs only after the predicate matches. | FlyDSL can import its runtime here, not during registration. |
+| Fallback | The router calls the original aten implementation when no predicate matches. | Unsupported ROCm cases must return `False`, not raise. |
 
 ### Native Contract
 
@@ -188,12 +211,25 @@ Inductor integration is more involved than native overrides because it participa
 
 ```mermaid
 flowchart TB
-    A["choose"] --> B["autotune"]
-    B --> C["render"]
-    C --> D["compile"]
-    D --> E["load"]
-    E --> F["build"]
+    A["lowering"] -->|adds| B["choice"]
+    B -->|bench| C["autotune"]
+    C -->|emit| D["source"]
+    D -->|async| E["load"]
+    E -->|runtime| F["artifact"]
 ```
+
+Compiler flow interpretation:
+
+| Node | CuteDSL component | Meaning for FlyDSL |
+|---|---|---|
+| Lowering | Inductor lowering and template registration | Add a FlyDSL candidate only for a specific lowering, not a generic graph backend. |
+| Choice | `CuteDSLTemplate` / `ChoiceCaller` | Model FlyDSL as one candidate among existing Inductor choices. |
+| Autotune | `select_algorithm` benchmark requests | Delay autotune until the first template has correctness and cache tests. |
+| Source | `CuteDSLTemplateKernel` | Emit a small launcher that calls a stable external DSL API. |
+| Load | `async_compile.cutedsl()` / PyCodeCache | Compile/load generated Python through Inductor's existing async path. |
+| Artifact | CuteDSL runtime cache | Keep backend-specific compile artifacts outside PyTorch ownership as much as possible. |
+
+The compiler path has more moving parts than native dispatch because it participates in code generation, caching, and algorithm selection. This is why the FlyDSL RFC keeps Inductor support as a later stage.
 
 ### Component Responsibilities
 
@@ -221,11 +257,21 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A["install"] --> B["smoke"]
-    B --> C["correctness"]
-    C --> D["OpInfo"]
-    D --> E["disable"]
+    A["install"] -->|optional| B["smoke"]
+    B -->|works| C["correctness"]
+    C -->|broadens| D["OpInfo"]
+    D -->|guards| E["disable"]
 ```
+
+Validation flow interpretation:
+
+| Stage | What it proves | Why FlyDSL should copy it |
+|---|---|---|
+| Install | Optional runtime can be installed only where supported. | Avoids adding FlyDSL to default PyTorch dependencies. |
+| Smoke | A minimal DSL kernel compiles and launches. | Separates package viability from op integration. |
+| Correctness | A concrete op matches aten/reference on supported cases. | Proves fallback-safe acceleration before broad coverage. |
+| OpInfo | DSL samples join PyTorch's common operator test machinery. | Gives maintainers familiar coverage and skip behavior. |
+| Disable | User controls can turn the DSL off. | Provides a debugging and rollback mechanism. |
 
 ### Test Surface
 

@@ -50,10 +50,22 @@ PyTorch's current DSL integration is easier to reason about as four separate pla
 
 ```mermaid
 flowchart LR
-    A["Control"] --> B["Native"]
-    B --> C["Compiler"]
-    C --> D["Validation"]
+    A["Control"] -->|enable| B["Native"]
+    A -->|configure| C["Compiler"]
+    B -->|prove| D["Validation"]
+    C -->|prove| D
 ```
+
+Diagram legend:
+
+| Node | Meaning |
+|---|---|
+| Control | Registers the DSL identity, exposes user controls, and answers availability/version queries without importing the runtime. |
+| Native | Adds eager dispatcher overrides with cheap predicates, lazy FlyDSL imports, and aten fallback. |
+| Compiler | Adds future Inductor template integration after native/runtime stability is proven. |
+| Validation | Tests import safety, optional dependency behavior, correctness, fallback, user controls, and future compiler codegen. |
+
+The important dependency is not that every plane must land together. The control plane can land first, native RMSNorm can land next, and Inductor can remain a documented future path until there is a tested template.
 
 The planes are independent enough to land in stages:
 
@@ -137,11 +149,29 @@ The control plane makes FlyDSL visible to PyTorch without importing the FlyDSL r
 
 ```mermaid
 flowchart LR
-    A["import torch"] --> B["_native"]
-    B --> C["register flydsl"]
-    C --> D["python_native"]
-    D --> E["state"]
+    A["import torch"] -->|imports| B["_native"]
+    B -->|metadata| C["register"]
+    C -->|exposes| D["python_native"]
+    D -->|reports| E["state"]
 ```
+
+Control plane responsibilities:
+
+| Step | What happens | What must not happen |
+|---|---|---|
+| `import torch` | PyTorch imports `torch._native` as part of normal initialization. | No FlyDSL package import, no ROCm runtime initialization, no device query. |
+| `_native` | Imports `flydsl_utils.py` so the DSL name can be registered. | No kernel module import and no architecture probing. |
+| `register` | Adds `flydsl` to the generic DSL registry using metadata/spec checks. | No operator override is required in the first PR. |
+| `python_native` | Exposes `torch.backends.python_native.flydsl` when the DSL is known. | No FlyDSL-specific public API beyond the generic DSL control surface. |
+| `state` | Reports enabled/disabled, available/unavailable, and version information. | Missing FlyDSL should not warn or change behavior by default. |
+
+Reviewer focus for this plane:
+
+| Question | Expected answer |
+|---|---|
+| Does `import torch` remain fork-safe? | Yes; only metadata/spec checks are allowed. |
+| Can users disable FlyDSL globally? | Yes, through `torch.backends.python_native.flydsl.enabled = False`. |
+| Does unsupported package/version state change aten behavior? | No; FlyDSL simply remains unavailable. |
 
 `torch/_native/flydsl_utils.py` should mirror the existing DSL utility contract:
 
@@ -305,21 +335,35 @@ Inductor support is part of the target architecture, but not part of the first i
 
 ```mermaid
 flowchart TB
-    A["lowering"] --> B["render"]
-    B --> C["compile/load"]
-    C --> D["run"]
+    A["lowering"] -->|select| B["template"]
+    B -->|emit| C["source"]
+    C -->|async| D["compile/load"]
+    D -->|call| E["run"]
 ```
 
 The compiler plane should mirror the CuteDSL template model at the interface level:
 
 | Interface | FlyDSL role | Notes |
 |---|---|---|
-| Template choice | `FlyDSLTemplate` | Adds FlyDSL candidates to an existing lowering, initially for one kernel family. |
-| Source rendering | `FlyDSLTemplateKernel` | Emits a Python launcher that calls FlyDSL public APIs. |
-| Scheduling hook | `FlyDSLScheduling` | Delegates codegen to `async_compile.flydsl()`. |
-| Async compile | `async_compile.flydsl()` | Writes/loads generated source and returns a wrapper. |
-| Runtime wrapper | `FlyDSLKernelWrapper` | Provides the callable `.run()` shape expected by Inductor. |
+| Lowering | Existing Inductor lowering | Decides when a FlyDSL template is even a candidate; no global backend replacement. |
+| Template | `FlyDSLTemplate` | Adds FlyDSL choices to an existing lowering, initially for one kernel family. |
+| Source | `FlyDSLTemplateKernel` | Emits a small Python launcher that calls FlyDSL public APIs. |
+| Compile/load | `async_compile.flydsl()` | Writes/loads generated source and returns a wrapper. |
+| Run | `FlyDSLKernelWrapper` | Provides the callable `.run()` shape expected by Inductor. |
 | Benchmark request | `FlyDSLBenchmarkRequest` | Added only when autotune is needed. |
+
+Compiler plane interpretation:
+
+| Topic | Decision for this RFC |
+|---|---|
+| First PR scope | Out of scope; this is an architectural target, not an initial implementation requirement. |
+| First template scope | One kernel family only, with explicit shape/layout support. |
+| Fusion | No general fusion in the first template. |
+| Autotune | Add only after correctness, cache behavior, and benchmark request plumbing are tested. |
+| Cache | Prefer FlyDSL's cache first; bridge into `TORCHINDUCTOR_CACHE_DIR` only if needed for Inductor integration. |
+| User controls | Do not expose broad user-facing Inductor flags until there is a working template and tests. |
+
+This section exists to keep the native design future-compatible. For example, the native adapter should call a stable FlyDSL wrapper API rather than depending on compiler internals that an Inductor template would later need to bypass.
 
 What should change:
 
@@ -347,11 +391,21 @@ Validation should match existing optional DSL patterns.
 
 ```mermaid
 flowchart TB
-    A["PR1 registry"] --> B["PR2 smoke"]
-    B --> C["PR3 RMSNorm"]
-    C --> D["PR4 OpInfo"]
-    D --> E["PR5+ compiler"]
+    A["Registry"] -->|safe import| B["Smoke"]
+    B -->|runtime OK| C["RMSNorm"]
+    C -->|correct| D["OpInfo"]
+    D -->|covered| E["Compiler"]
 ```
+
+Validation gates:
+
+| Gate | Minimum proof | Failure behavior |
+|---|---|---|
+| Registry | Missing FlyDSL is silent; `python_native` state is correct; no runtime import. | Do not register FlyDSL as available. |
+| Smoke | A tiny FlyDSL kernel compiles and runs only on selected ROCm CI jobs. | Skip outside supported ROCm jobs. |
+| RMSNorm | Supported cases match aten/reference; unsupported cases fall back. | Predicate returns `False`; aten runs. |
+| OpInfo | DSL-specific samples exercise supported shapes and user-disable behavior. | Do not broaden default coverage. |
+| Compiler | Generated source, async compile/load, cache, and fallback are tested. | Keep `FLYDSL` out of broad backend choices. |
 
 Test categories:
 
