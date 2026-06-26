@@ -50,9 +50,9 @@ PyTorch's current DSL integration is easier to reason about as four separate pla
 
 ```mermaid
 flowchart LR
-    A["Control<br/>user knobs + availability"] --> B["Native / eager<br/>dispatcher override"]
-    B --> C["Compiler<br/>Inductor templates"]
-    C --> D["Validation<br/>CI + tests + OpInfo"]
+    A["Control"] --> B["Native"]
+    B --> C["Compiler"]
+    C --> D["Validation"]
 ```
 
 The planes are independent enough to land in stages:
@@ -68,10 +68,10 @@ CuteDSL currently uses this architecture for CUDA:
 
 | Plane | CuteDSL implementation | FlyDSL equivalent |
 |---|---|---|
-| Control | `torch.backends.python_native.cutedsl` | `torch.backends.python_native.flydsl` |
-| Native/eager | `torch/_native/cutedsl_utils.py`, op wrappers | `torch/_native/flydsl_utils.py`, ROCm op wrappers |
-| Compiler | `torch/_inductor/codegen/cutedsl/*` | `torch/_inductor/codegen/flydsl/*` later |
-| Validation | `install_cutlass_dsl`, smoke tests, OpInfo | `install_flydsl`, smoke tests, OpInfo |
+| Control | [`torch.backends.python_native.cutedsl`][pytorch-python-native] | `torch.backends.python_native.flydsl` |
+| Native/eager | [`torch/_native/cutedsl_utils.py`][pytorch-cutedsl-utils], op wrappers | `torch/_native/flydsl_utils.py`, ROCm op wrappers |
+| Compiler | [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl] | `torch/_inductor/codegen/flydsl/` later |
+| Validation | [CI install helper][pytorch-ci-common-utils], smoke tests, OpInfo | `install_flydsl`, smoke tests, OpInfo |
 
 ### Reference Material
 
@@ -79,13 +79,13 @@ These files are useful companion reads when reviewing or implementing this RFC:
 
 | Topic | Reference | Why it helps |
 |---|---|---|
-| PyTorch native DSL contract | PyTorch: `torch/_native/README.md` | Defines `cond` / `impl`, lazy imports, FakeTensor constraints, logging, and OpInfo expectations. |
-| PyTorch DSL registry | PyTorch: `torch/_native/dsl_registry.py`, `torch/_native/registry.py` | Shows how DSL availability and dispatcher override routing are represented. |
-| User controls | PyTorch: `torch/backends/python_native/__init__.py` | Shows the shared `torch.backends.python_native.<dsl>` control surface. |
-| RMSNorm schemas | PyTorch: `aten/src/ATen/native/native_functions.yaml` | Shows `aten.rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
-| CuteDSL native adapters | PyTorch: `torch/_native/ops/topk/cutedsl_impl.py`, `torch/_native/ops/scatter_add/cutedsl_impl.py` | Concrete examples of cheap predicates plus lazy runtime imports. |
-| CuteDSL RMSNorm OpInfo | PyTorch: `torch/testing/_internal/common_methods_invocations.py` | Shows the existing CuteDSL RMSNorm sample-input pattern. |
-| CuteDSL compiler templates | PyTorch: `torch/_inductor/codegen/cutedsl/*`, `torch/_inductor/async_compile.py` | Interface-level model for a future FlyDSL Inductor path. |
+| PyTorch native DSL contract | PyTorch: [`torch/_native/README.md`][pytorch-native-readme] | Defines `cond` / `impl`, lazy imports, FakeTensor constraints, logging, and OpInfo expectations. |
+| PyTorch DSL registry | PyTorch: [`torch/_native/dsl_registry.py`][pytorch-dsl-registry], [`torch/_native/registry.py`][pytorch-native-registry] | Shows how DSL availability and dispatcher override routing are represented. |
+| User controls | PyTorch: [`torch/backends/python_native/__init__.py`][pytorch-python-native] | Shows the shared `torch.backends.python_native.<dsl>` control surface. |
+| RMSNorm schemas | PyTorch: [`aten/src/ATen/native/native_functions.yaml`][pytorch-native-functions] | Shows `aten.rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
+| CuteDSL native adapters | PyTorch: [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl], [`torch/_native/ops/scatter_add/cutedsl_impl.py`][pytorch-scatter-cutedsl] | Concrete examples of cheap predicates plus lazy runtime imports. |
+| CuteDSL RMSNorm OpInfo | PyTorch: [`torch/testing/_internal/common_methods_invocations.py`][pytorch-common-methods] | Shows the existing CuteDSL RMSNorm sample-input pattern. |
+| CuteDSL compiler templates | PyTorch: [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl], [`torch/_inductor/async_compile.py`][pytorch-async-compile] | Interface-level model for a future FlyDSL Inductor path. |
 | FlyDSL kernel authoring | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | Shows `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, launch shape, and cache behavior. |
 | FlyDSL RMSNorm coverage | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing correctness and benchmark shape source for the proposed MVP op. |
 | FlyDSL test and benchmark flow | FlyDSL: `docs/testing_benchmarking_guide.md` | Explains GPU kernel tests, selective benchmark execution, and expected output format. |
@@ -137,10 +137,10 @@ The control plane makes FlyDSL visible to PyTorch without importing the FlyDSL r
 
 ```mermaid
 flowchart LR
-    A["import torch"] --> B["torch._native imports flydsl_utils"]
-    B --> C["dsl_registry.register_dsl('flydsl')"]
-    C --> D["torch.backends.python_native.flydsl"]
-    D --> E["enabled / disabled / available / version"]
+    A["import torch"] --> B["_native"]
+    B --> C["register flydsl"]
+    C --> D["python_native"]
+    D --> E["state"]
 ```
 
 `torch/_native/flydsl_utils.py` should mirror the existing DSL utility contract:
@@ -195,13 +195,13 @@ sequenceDiagram
     participant Fly as flydsl package
     participant Aten as original aten ROCm kernel
 
-    User->>Dispatcher: aten op on ROCm tensor
-    Dispatcher->>Router: backend dispatch
-    Router->>Cond: backend/version/dtype/shape/layout/arch checks
+    User->>Dispatcher: aten op
+    Dispatcher->>Router: dispatch
+    Router->>Cond: gates
     alt eligible
         Cond-->>Router: true
-        Router->>Impl: schema-compatible adapter
-        Impl->>Fly: lazy import FlyDSL kernel
+        Router->>Impl: adapter
+        Impl->>Fly: lazy import
         Fly-->>User: result
     else not eligible
         Cond-->>Router: false
@@ -296,7 +296,7 @@ def register_to_dispatch() -> None:
     )
 ```
 
-The key points are the same as `torch/_native/README.md`: `cond` is cheap and schema-compatible, `_impl` lazily imports FlyDSL, and unsupported cases are handled by returning `False` from `_cond`. If the first implementation chooses `_fused_rms_norm` instead of `rms_norm`, the adapter must also cover the fused op's tuple output and backward/autograd contract.
+The key points are the same as [`torch/_native/README.md`][pytorch-native-readme]: `cond` is cheap and schema-compatible, `_impl` lazily imports FlyDSL, and unsupported cases are handled by returning `False` from `_cond`. If the first implementation chooses `_fused_rms_norm` instead of `rms_norm`, the adapter must also cover the fused op's tuple output and backward/autograd contract.
 The dispatch key string remains `"CUDA"` because PyTorch uses the CUDA backend key for both CUDA and HIP/ROCm tensor backends; ROCm-specific behavior is gated by `torch.version.hip is not None` and architecture predicates.
 
 ### Compiler / Inductor Plane
@@ -305,9 +305,9 @@ Inductor support is part of the target architecture, but not part of the first i
 
 ```mermaid
 flowchart TB
-    A["Inductor lowering chooses a FlyDSL template"] --> B["Render Python launcher source"]
-    B --> C["Compile/load through async_compile.flydsl"]
-    C --> D["Call FlyDSL runtime cache and launcher"]
+    A["lowering"] --> B["render"]
+    B --> C["compile/load"]
+    C --> D["run"]
 ```
 
 The compiler plane should mirror the CuteDSL template model at the interface level:
@@ -347,10 +347,10 @@ Validation should match existing optional DSL patterns.
 
 ```mermaid
 flowchart TB
-    A["PR 1: registry tests"] --> B["PR 2: FlyDSL smoke test"]
-    B --> C["PR 3: RMSNorm native correctness"]
-    C --> D["PR 4: OpInfo + user control tests"]
-    D --> E["PR 5+: Inductor template tests"]
+    A["PR1 registry"] --> B["PR2 smoke"]
+    B --> C["PR3 RMSNorm"]
+    C --> D["PR4 OpInfo"]
+    D --> E["PR5+ compiler"]
 ```
 
 Test categories:
@@ -496,3 +496,16 @@ Before opening the first PyTorch PR, the implementation should be able to answer
 ## Resolution / Next Steps
 
 If accepted, implementation should proceed in the rollout order above. The first implementation PR should not add any FlyDSL kernel override; it should only add the DSL registration path and tests proving that default PyTorch behavior is unchanged.
+
+[pytorch-native-readme]: https://github.com/pytorch/pytorch/blob/main/torch/_native/README.md
+[pytorch-cutedsl-utils]: https://github.com/pytorch/pytorch/blob/main/torch/_native/cutedsl_utils.py
+[pytorch-dsl-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/dsl_registry.py
+[pytorch-native-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/registry.py
+[pytorch-python-native]: https://github.com/pytorch/pytorch/blob/main/torch/backends/python_native/__init__.py
+[pytorch-ci-common-utils]: https://github.com/pytorch/pytorch/blob/main/.ci/pytorch/common_utils.sh
+[pytorch-native-functions]: https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/native_functions.yaml
+[pytorch-topk-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/topk/cutedsl_impl.py
+[pytorch-scatter-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/scatter_add/cutedsl_impl.py
+[pytorch-common-methods]: https://github.com/pytorch/pytorch/blob/main/torch/testing/_internal/common_methods_invocations.py
+[pytorch-inductor-cutedsl]: https://github.com/pytorch/pytorch/tree/main/torch/_inductor/codegen/cutedsl
+[pytorch-async-compile]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/async_compile.py

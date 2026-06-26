@@ -24,12 +24,12 @@ Use this index when cross-checking the RFC against upstream PyTorch code and rev
 
 | Claim | Evidence |
 |---|---|
-| DSL runtimes are registered without importing the runtime package. | `torch/_native/cutedsl_utils.py`, `torch/_native/dsl_registry.py` |
-| User-facing controls are shared across DSLs. | `torch/backends/python_native/__init__.py`, `pytorch/pytorch#178381` |
-| Native overrides use a `cond` / `impl` split with aten fallback. | `torch/_native/registry.py`, `torch/_native/ops/topk/cutedsl_impl.py`, `pytorch/pytorch#176280` |
-| Optional dependency installs are limited to selected CI jobs. | `.ci/pytorch/common_utils.sh`, CuteDSL smoke tests |
-| Inductor template support is a separate compiler integration surface. | `torch/_inductor/codegen/cutedsl/*`, `torch/_inductor/async_compile.py`, `pytorch/pytorch#160108` |
-| External kernel ownership is preferred over large in-tree kernel dumps. | `pytorch/pytorch#177553`, `torch/_vendor/quack/*` discussion history |
+| DSL runtimes are registered without importing the runtime package. | [`torch/_native/cutedsl_utils.py`][pytorch-cutedsl-utils], [`torch/_native/dsl_registry.py`][pytorch-dsl-registry] |
+| User-facing controls are shared across DSLs. | [`torch/backends/python_native/__init__.py`][pytorch-python-native], [pytorch/pytorch#178381][pr-178381] |
+| Native overrides use a `cond` / `impl` split with aten fallback. | [`torch/_native/registry.py`][pytorch-native-registry], [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl], [pytorch/pytorch#176280][pr-176280] |
+| Optional dependency installs are limited to selected CI jobs. | [`.ci/pytorch/common_utils.sh`][pytorch-ci-common-utils], [`test/python_native/test_cutedsl_smoketest.py`][pytorch-cutedsl-smoke] |
+| Inductor template support is a separate compiler integration surface. | [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl], [`torch/_inductor/async_compile.py`][pytorch-async-compile], [pytorch/pytorch#160108][pr-160108] |
+| External kernel ownership is preferred over large in-tree kernel dumps. | [pytorch/pytorch#177553][pr-177553], [`torch/_vendor/quack/`][pytorch-quack] discussion history |
 
 ## Reading Guide
 
@@ -37,12 +37,12 @@ For a reviewer who wants to connect this report to concrete code, the fastest pa
 
 | Step | Read | What to look for |
 |---:|---|---|
-| 1 | PyTorch: `torch/_native/README.md` | The core contract: `cond` / `impl`, no runtime import during registration, fallback through the router, FakeTensor-safe predicates, and OpInfo expectations. |
-| 2 | PyTorch: `torch/_native/cutedsl_utils.py` | How an optional DSL runtime is discovered through package metadata/spec checks without importing the runtime. |
-| 3 | PyTorch: `torch/_native/ops/topk/cutedsl_impl.py` | A compact native adapter pattern: cheap eligibility check, lazy kernel import, and schema-compatible wrapper. |
-| 4 | PyTorch: `torch/backends/python_native/__init__.py` | How users enable, disable, inspect, or reorder Python-native DSL overrides. |
-| 5 | PyTorch: `aten/src/ATen/native/native_functions.yaml` | The RMSNorm schemas: `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
-| 6 | PyTorch: `torch/_inductor/codegen/cutedsl/*` | The compiler-side template shape that FlyDSL should mirror later, not in the first PR. |
+| 1 | PyTorch: [`torch/_native/README.md`][pytorch-native-readme] | The core contract: `cond` / `impl`, no runtime import during registration, fallback through the router, FakeTensor-safe predicates, and OpInfo expectations. |
+| 2 | PyTorch: [`torch/_native/cutedsl_utils.py`][pytorch-cutedsl-utils] | How an optional DSL runtime is discovered through package metadata/spec checks without importing the runtime. |
+| 3 | PyTorch: [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] | A compact native adapter pattern: cheap eligibility check, lazy kernel import, and schema-compatible wrapper. |
+| 4 | PyTorch: [`torch/backends/python_native/__init__.py`][pytorch-python-native] | How users enable, disable, inspect, or reorder Python-native DSL overrides. |
+| 5 | PyTorch: [`aten/src/ATen/native/native_functions.yaml`][pytorch-native-functions] | The RMSNorm schemas: `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
+| 6 | PyTorch: [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl] | The compiler-side template shape that FlyDSL should mirror later, not in the first PR. |
 | 7 | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | How FlyDSL exposes `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, and launch configuration. |
 | 8 | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing RMSNorm correctness, dtype, shape, and benchmark scaffolding for the proposed MVP. |
 
@@ -81,26 +81,26 @@ FlyDSL should copy this shape, not the CUDA-specific details around CUTLASS/Cute
 
 | Area | File | Role |
 |---|---|---|
-| DSL availability | `torch/_native/cutedsl_utils.py` | Checks CUDA/HIP status, optional package presence, known-good versions, and registers `cutedsl`. |
-| DSL registry | `torch/_native/dsl_registry.py` | Stores registered DSL modules and exposes availability/version queries. |
-| Override router | `torch/_native/registry.py` | Stores per-op override graphs and installs dispatcher routers. |
-| User controls | `torch/backends/python_native/__init__.py` | Exposes `torch.backends.python_native.cutedsl.enabled`, `available_dsls`, and operation controls. |
-| Native docs | `torch/_native/README.md` | Defines import-safety, fallback, FakeTensor, and testing expectations. |
-| TopK adapter | `torch/_native/ops/topk/cutedsl_impl.py` | Example of strict shape/dtype predicate plus lazy kernel import. |
-| ScatterAdd adapter | `torch/_native/ops/scatter_add/cutedsl_impl.py` | Example of architecture-specific CUDA adapter. |
-| QuACK wrappers | `torch/_vendor/quack/*` | External CuteDSL kernel library subset and runtime workarounds. |
+| DSL availability | [`torch/_native/cutedsl_utils.py`][pytorch-cutedsl-utils] | Checks CUDA/HIP status, optional package presence, known-good versions, and registers `cutedsl`. |
+| DSL registry | [`torch/_native/dsl_registry.py`][pytorch-dsl-registry] | Stores registered DSL modules and exposes availability/version queries. |
+| Override router | [`torch/_native/registry.py`][pytorch-native-registry] | Stores per-op override graphs and installs dispatcher routers. |
+| User controls | [`torch/backends/python_native/__init__.py`][pytorch-python-native] | Exposes `torch.backends.python_native.cutedsl.enabled`, `available_dsls`, and operation controls. |
+| Native docs | [`torch/_native/README.md`][pytorch-native-readme] | Defines import-safety, fallback, FakeTensor, and testing expectations. |
+| TopK adapter | [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] | Example of strict shape/dtype predicate plus lazy kernel import. |
+| ScatterAdd adapter | [`torch/_native/ops/scatter_add/cutedsl_impl.py`][pytorch-scatter-cutedsl] | Example of architecture-specific CUDA adapter. |
+| QuACK wrappers | [`torch/_vendor/quack/`][pytorch-quack] | External CuteDSL kernel library subset and runtime workarounds. |
 
 ### Inductor Files
 
 | Area | File | Role |
 |---|---|---|
-| Template object | `torch/_inductor/codegen/cutedsl/cutedsl_template.py` | Creates template choices and benchmark requests. |
-| Kernel renderer | `torch/_inductor/codegen/cutedsl/cutedsl_kernel.py` | Renders Python/Jinja source and callable wrappers. |
-| Scheduler | `torch/_inductor/codegen/cutedsl/cutedsl_scheduling.py` | Hooks rendered source into Inductor scheduling. |
-| Async compile | `torch/_inductor/async_compile.py` | Provides `async_compile.cutedsl()`. |
-| Runtime cache | `torch/_inductor/runtime/cutedsl_cache.py` | Persists compiled artifacts when possible. |
-| Example templates | `torch/_inductor/kernel/mm_grouped.py`, `torch/_inductor/kernel/flex/*` | Real uses of CuteDSL templates. |
-| Config | `torch/_inductor/config.py` | Adds `CUTEDSL` as a selectable backend option. |
+| Template object | [`torch/_inductor/codegen/cutedsl/cutedsl_template.py`][pytorch-cutedsl-template] | Creates template choices and benchmark requests. |
+| Kernel renderer | [`torch/_inductor/codegen/cutedsl/cutedsl_kernel.py`][pytorch-cutedsl-kernel] | Renders Python/Jinja source and callable wrappers. |
+| Scheduler | [`torch/_inductor/codegen/cutedsl/cutedsl_scheduling.py`][pytorch-cutedsl-scheduling] | Hooks rendered source into Inductor scheduling. |
+| Async compile | [`torch/_inductor/async_compile.py`][pytorch-async-compile] | Provides `async_compile.cutedsl()`. |
+| Runtime cache | [`torch/_inductor/runtime/cutedsl_cache.py`][pytorch-cutedsl-cache] | Persists compiled artifacts when possible. |
+| Example templates | [`torch/_inductor/kernel/mm_grouped.py`][pytorch-mm-grouped], [`torch/_inductor/kernel/flex/`][pytorch-flex-kernel] | Real uses of CuteDSL templates. |
+| Config | [`torch/_inductor/config.py`][pytorch-inductor-config] | Adds `CUTEDSL` as a selectable backend option. |
 
 ## Integration Architecture
 
@@ -108,11 +108,11 @@ Use this as the compact mental model:
 
 ```mermaid
 flowchart LR
-    A["Control<br/>python_native + DSL registry"] --> B["Native/eager<br/>dispatcher override"]
-    A --> C["Inductor<br/>template backend"]
-    B --> D["CuteDSL kernels<br/>lazy import"]
+    A["Control"] --> B["Native"]
+    A --> C["Compiler"]
+    B --> D["Kernels"]
     C --> D
-    D --> E["External runtime<br/>nvidia-cutlass-dsl"]
+    D --> E["Runtime"]
 ```
 
 The key point is that the same DSL identity, `cutedsl`, is shared by user controls, native overrides, tests, and compiler paths.
@@ -130,12 +130,12 @@ sequenceDiagram
     participant Impl as CuteDSL impl
     participant Aten as original aten CUDA kernel
 
-    User->>Dispatcher: aten op on CUDA tensor
-    Dispatcher->>Router: backend dispatch
-    Router->>Cond: dtype / shape / device checks
+    User->>Dispatcher: aten op
+    Dispatcher->>Router: dispatch
+    Router->>Cond: gates
     alt eligible
         Cond-->>Router: true
-        Router->>Impl: lazy import CuteDSL kernel
+        Router->>Impl: adapter
         Impl-->>User: result
     else unsupported
         Cond-->>Router: false
@@ -158,7 +158,7 @@ sequenceDiagram
 
 ### TopK Adapter Pattern
 
-`torch/_native/ops/topk/cutedsl_impl.py` is a good pattern for FlyDSL to copy conceptually:
+[`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] is a good pattern for FlyDSL to copy conceptually:
 
 | Piece | Pattern |
 |---|---|
@@ -175,8 +175,8 @@ RMSNorm is a better first FlyDSL native candidate than a generic GEMM or compile
 
 | Evidence | Why it matters for FlyDSL |
 |---|---|
-| `aten/src/ATen/native/native_functions.yaml` defines `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. | The first PR can choose an existing aten surface instead of proposing a new public operator. |
-| `torch/testing/_internal/common_methods_invocations.py` has `sample_inputs_rms_norm_cutedsl`. | PyTorch already has a pattern for DSL-specific RMSNorm OpInfo inputs. |
+| [`aten/src/ATen/native/native_functions.yaml`][pytorch-native-functions] defines `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. | The first PR can choose an existing aten surface instead of proposing a new public operator. |
+| [`torch/testing/_internal/common_methods_invocations.py`][pytorch-common-methods] has `sample_inputs_rms_norm_cutedsl`. | PyTorch already has a pattern for DSL-specific RMSNorm OpInfo inputs. |
 | FlyDSL has `tests/kernels/test_rmsnorm.py`. | The FlyDSL side already has correctness and benchmark scaffolding to turn into a support matrix. |
 | RMSNorm has a small output contract compared with GEMM/MoE templates. | Native/eager integration can validate optional runtime behavior before taking on Inductor autotune and scheduling. |
 
@@ -188,11 +188,11 @@ Inductor integration is more involved than native overrides because it participa
 
 ```mermaid
 flowchart TB
-    A["Inductor lowering adds CuteDSLTemplate choice"] --> B["Autotune/select_algorithm evaluates choices"]
-    B --> C["CuteDSLTemplateKernel renders Python source"]
-    C --> D["CuteDSLScheduling calls async_compile.cutedsl"]
-    D --> E["PyCodeCache loads generated module"]
-    E --> F["cutlass.cute.compile builds GPU artifact"]
+    A["choose"] --> B["autotune"]
+    B --> C["render"]
+    C --> D["compile"]
+    D --> E["load"]
+    E --> F["build"]
 ```
 
 ### Component Responsibilities
@@ -221,20 +221,20 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A["install optional runtime"] --> B["smoke compile"]
-    B --> C["op correctness"]
-    C --> D["OpInfo / compile tests"]
-    D --> E["user disable tests"]
+    A["install"] --> B["smoke"]
+    B --> C["correctness"]
+    C --> D["OpInfo"]
+    D --> E["disable"]
 ```
 
 ### Test Surface
 
 | Test area | CuteDSL example |
 |---|---|
-| Runtime smoke | `test/python_native/test_cutedsl_smoketest.py` |
-| DSL registry | `test/python_native/test_dsl_registry.py` |
-| Native op correctness | `test/python_native/test_topk_cutedsl.py`, scatter/norm tests |
-| Inductor template | `test/inductor/test_cutedsl_template.py` |
+| Runtime smoke | [`test/python_native/test_cutedsl_smoketest.py`][pytorch-cutedsl-smoke] |
+| DSL registry | [`test/python_native/test_dsl_registry.py`][pytorch-dsl-registry-test] |
+| Native op correctness | [`test/python_native/test_topk_cutedsl.py`][pytorch-topk-cutedsl-test], scatter/norm tests |
+| Inductor template | [`test/inductor/test_cutedsl_template.py`][pytorch-cutedsl-template-test] |
 | Backend-specific integration | grouped GEMM, flex attention, flex GEMM tests |
 | Skip helper | `skipIfNoCuteDSL`, `TEST_CUTEDSL` |
 | OpInfo | `dsl_ops_by_dsl["cutedsl"]` entries |
@@ -306,3 +306,32 @@ CuteDSL provides a proven PyTorch integration shape, but FlyDSL should not copy 
 - Inductor templates as a later compiler integration.
 
 This is the structure the FlyDSL RFC should reference, while keeping the RFC itself focused on the proposed FlyDSL design.
+
+[pytorch-native-readme]: https://github.com/pytorch/pytorch/blob/main/torch/_native/README.md
+[pytorch-cutedsl-utils]: https://github.com/pytorch/pytorch/blob/main/torch/_native/cutedsl_utils.py
+[pytorch-dsl-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/dsl_registry.py
+[pytorch-native-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/registry.py
+[pytorch-python-native]: https://github.com/pytorch/pytorch/blob/main/torch/backends/python_native/__init__.py
+[pytorch-ci-common-utils]: https://github.com/pytorch/pytorch/blob/main/.ci/pytorch/common_utils.sh
+[pytorch-cutedsl-smoke]: https://github.com/pytorch/pytorch/blob/main/test/python_native/test_cutedsl_smoketest.py
+[pytorch-dsl-registry-test]: https://github.com/pytorch/pytorch/blob/main/test/python_native/test_dsl_registry.py
+[pytorch-topk-cutedsl-test]: https://github.com/pytorch/pytorch/blob/main/test/python_native/test_topk_cutedsl.py
+[pytorch-cutedsl-template-test]: https://github.com/pytorch/pytorch/blob/main/test/inductor/test_cutedsl_template.py
+[pytorch-native-functions]: https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/native_functions.yaml
+[pytorch-common-methods]: https://github.com/pytorch/pytorch/blob/main/torch/testing/_internal/common_methods_invocations.py
+[pytorch-topk-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/topk/cutedsl_impl.py
+[pytorch-scatter-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/scatter_add/cutedsl_impl.py
+[pytorch-quack]: https://github.com/pytorch/pytorch/tree/main/torch/_vendor/quack
+[pytorch-inductor-cutedsl]: https://github.com/pytorch/pytorch/tree/main/torch/_inductor/codegen/cutedsl
+[pytorch-cutedsl-template]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/codegen/cutedsl/cutedsl_template.py
+[pytorch-cutedsl-kernel]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/codegen/cutedsl/cutedsl_kernel.py
+[pytorch-cutedsl-scheduling]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/codegen/cutedsl/cutedsl_scheduling.py
+[pytorch-async-compile]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/async_compile.py
+[pytorch-cutedsl-cache]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/runtime/cutedsl_cache.py
+[pytorch-mm-grouped]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/kernel/mm_grouped.py
+[pytorch-flex-kernel]: https://github.com/pytorch/pytorch/tree/main/torch/_inductor/kernel/flex
+[pytorch-inductor-config]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/config.py
+[pr-160108]: https://github.com/pytorch/pytorch/pull/160108
+[pr-176280]: https://github.com/pytorch/pytorch/pull/176280
+[pr-177553]: https://github.com/pytorch/pytorch/pull/177553
+[pr-178381]: https://github.com/pytorch/pytorch/pull/178381
