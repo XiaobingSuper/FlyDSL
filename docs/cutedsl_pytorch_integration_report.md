@@ -75,6 +75,19 @@ def register_to_dispatch():
 
 FlyDSL should copy this shape, not the CUDA-specific details around CUTLASS/CuteDSL.
 
+## Integration Chronology
+
+CuteDSL's upstream path did not start with native/eager overrides. The compiler template path came first because the earliest PyTorch use cases were `torch.compile` templates such as grouped GEMM and flex attention. Native/eager overrides were added later through the generic `torch._native` DSL framework.
+
+| Stage | Surface | What landed | Lesson for FlyDSL |
+|---:|---|---|---|
+| 1 | Inductor | `torch/_inductor/codegen/cutedsl/`, scheduling, `async_compile.cutedsl()` | A DSL can enter PyTorch through compiler templates when the first use case is graph/compiler selected. |
+| 2 | Control/native framework | `torch._native` DSL registry and `python_native` controls | Optional DSLs need a shared control plane before broad native coverage. |
+| 3 | Native/eager ops | Per-op `cond` / `impl` adapters such as TopK and ScatterAdd | Eager support is acceptable only with strict predicates and aten fallback. |
+| 4 | Compile-cache hardening | QuACK eager `.o` cache and Inductor `cutedsl_cache.py` | JIT compile cost must be amortized and observable before expanding coverage. |
+
+This history does not imply FlyDSL must start with Inductor. It means the first integration path should match the first stable FlyDSL surface. Today FlyDSL has a usable eager JIT/runtime API and RMSNorm tests, but no Inductor-shaped codegen/scheduling interface.
+
 ## Code Map
 
 ### Native / Eager Files
@@ -129,6 +142,204 @@ How to read the diagram:
 
 What this diagram does not mean: native overrides and Inductor templates are not the same implementation. They share the DSL identity and dependency policy, but they are separate review surfaces.
 
+## Code-Level Walkthrough
+
+This section reduces the relevant PyTorch code to the parts that matter for FlyDSL. The snippets are intentionally shortened; they are meant to explain the integration shape, not to copy every guard or helper.
+
+### 1. Control Plane: Register a DSL Without Importing It
+
+`torch/_native/cutedsl_utils.py` proves that a DSL can be known to PyTorch without importing the external runtime package during `import torch`:
+
+```python
+@functools.cache
+def _check_runtime_available() -> tuple[bool, Version | None]:
+    # CPU-only and ROCm builds should not import CUTLASS/CuTeDSL.
+    if not _cuda.is_built():
+        return (False, None)
+
+    import torch
+    if torch.version.hip is not None:
+        return (False, None)
+
+    reason = _unavailable_reason([
+        ("nvidia_cutlass_dsl", "cutlass"),
+        ("apache_tvm_ffi", "tvm_ffi"),
+    ])
+    if reason is not None:
+        return False, None
+    return True, _available_version("nvidia_cutlass_dsl")
+```
+
+The important detail is `_unavailable_reason(...)`: it checks import metadata/specs for optional packages, not the CuTeDSL runtime itself. FlyDSL should mirror the shape but invert the backend gate: unavailable on non-ROCm builds, import-safe on ROCm builds until an eligible op actually runs.
+
+The registration wrapper then refuses to install overrides when the runtime is missing, disabled, or outside a known-good version set:
+
+```python
+def register_op_override(...):
+    available, version = _check_runtime_available()
+    if (not available) or check_native_jit_disabled():
+        return
+    if not _version_is_ok():
+        return
+
+    _register_op_override_impl("cutedsl", ..., cond, impl)
+```
+
+This is the pattern FlyDSL should copy for `torch/_native/flydsl_utils.py`: keep PyTorch's default import path quiet, and make availability a runtime capability, not a hard dependency.
+
+### 2. Native Router: `cond` First, Then Fallback
+
+`torch/_native/registry.py` turns each `(op, dispatch_key)` into a small routing graph. The key behavior is first-match-wins; if no predicate matches, the captured aten kernel is called:
+
+```python
+def _dispatch(args, kwargs, swallow_cond_exceptions: bool):
+    for cond, impl_name in cond_impl:
+        try:
+            matched = cond(*args, **kwargs)
+        except Exception:
+            if not swallow_cond_exceptions:
+                raise
+            continue
+        if matched:
+            return getattr(torch.ops._native, impl_name)(*args, **kwargs)
+    return _NO_MATCH
+
+
+def eager_router(keyset, *args, _fallback=fallback_kernel, **kwargs):
+    result = _dispatch(args, kwargs, swallow_cond_exceptions=False)
+    if result is _NO_MATCH:
+        return _fallback.call_boxed(keyset, *args, **kwargs)
+    return result
+```
+
+This explains why FlyDSL predicates must be cheap and conservative. Returning `False` is the normal unsupported-case behavior; raising should indicate an adapter bug.
+
+The same registry also creates a compile/export router that returns `NotImplemented` on no match, rather than globally patching Inductor decompositions:
+
+```python
+def compile_router(*args, **kwargs):
+    result = _dispatch(args, kwargs, swallow_cond_exceptions=True)
+    if result is _NO_MATCH:
+        return NotImplemented
+    return result
+```
+
+For FlyDSL, this means native/eager integration should not be treated as an implicit Inductor backend. Compiler use remains opt-in and separately tested.
+
+### 3. Native Adapter: Strict Predicate, Lazy Kernel Import
+
+`torch/_native/ops/topk/cutedsl_impl.py` is the clearest concrete adapter. The predicate narrows the shape and performance envelope before any kernel import:
+
+```python
+def _eligible(self, k, dim, largest, sorted_) -> bool:
+    if not self.is_cuda or self.dtype != torch.float32:
+        return False
+    if any_cow(self):
+        return False
+    if not largest or not sorted_:
+        return False
+    if not last_dim_row_major_ok(self, dim):
+        return False
+    if _kernel_for(k, self.shape[-1]) is None:
+        return False
+
+    rows = math.prod(self.shape[:-1])
+    if rows < _min_rows_for_full_wave(self.device.index or 0):
+        return False
+    return True
+```
+
+Only after the predicate succeeds does the adapter import the kernel module:
+
+```python
+def _run(self, k):
+    from .cutedsl_kernels import topk_radix, topk_register
+
+    kernel = _kernel_for(k, flatten_last_dim(self).shape[-1])
+    if kernel == "register":
+        return topk_register(...)
+    return topk_radix(...)
+```
+
+The FlyDSL RMSNorm adapter should use the same split: PyTorch owns the cheap schema-compatible eligibility check; FlyDSL owns the kernel wrapper and compile/cache behavior behind the lazy import.
+
+### 4. Eager JIT Cache: Cold Compile Is Amortized
+
+The QuACK cache used by CuteDSL eager kernels is a compact reference for managing JIT cost. `torch/_vendor/quack/cache/jit.py` wraps a compile function with memory and disk cache tiers:
+
+```python
+def jit_cache(fn):
+    cache = {}
+
+    def wrapper(*args, **kwargs):
+        cache_key = args + tuple(sorted(kwargs.items())) if kwargs else args
+
+        if cache_key in cache:
+            return cache[cache_key]
+
+        sha = _key_to_hash((fn.__qualname__,) + cache_key)
+        o_path = get_cache_path() / _compute_source_fingerprint() / f"{sha}.o"
+
+        if o_path.exists():
+            loaded = cute.runtime.load_module(str(o_path), enable_tvm_ffi=True)
+            cache[cache_key] = loaded[EXPORT_FUNC_NAME]
+            return cache[cache_key]
+
+        compiled_fn = fn(*args, **kwargs)  # calls cute.compile(...)
+        compiled_fn.export_to_c(object_file_path=str(o_path), function_name="func")
+        cache[cache_key] = compiled_fn
+        return compiled_fn
+```
+
+The actual implementation also uses per-key file locks and compile-only mode, but the flow above is the key idea: first eligible call may compile, warm calls should load from memory or disk. FlyDSL should not copy QuACK's CUTLASS-specific cache, but it should expose the same observable contract through FlyDSL-owned wrappers.
+
+### 5. Inductor Path: Emit Source, Then Let Async Compile Load It
+
+The Inductor path is shaped very differently from native dispatch. `CuteDSLScheduling.define_kernel(...)` renders source and emits an `async_compile.cutedsl(...)` call into the generated wrapper:
+
+```python
+def define_kernel(self, src_code_str, node_schedule, precompile_metadata=None):
+    kernel_hash = hashlib.sha256(src_code_str.encode("utf-8")).hexdigest()[:8]
+    kernel_name = f"cutedsl_{kernel_hash}"
+    src_code_str = src_code_str.replace(str(Placeholder.KERNEL_NAME), kernel_name)
+
+    compile_wrapper = IndentedBuffer()
+    compile_wrapper.writeline(f"async_compile.cutedsl({kernel_name!r}, r'''")
+    compile_wrapper.splice(src_code_str, strip=True)
+    compile_wrapper.writeline("''')")
+
+    wrapper.define_kernel(kernel_name, compile_wrapper.getvalue(), metadata_comment)
+    return kernel_name
+```
+
+`async_compile.cutedsl(...)` then writes that Python source through `PyCodeCache`, loads the generated module, and wraps the named entry point:
+
+```python
+def cutedsl(self, kernel_name: str, source_code: str, precompile_metadata=None):
+    from torch._inductor.codegen.cutedsl.cutedsl_kernel import (
+        CuteDSLKernelWrapper,
+        MAIN_SUFFIX,
+    )
+
+    if self.use_process_pool():
+        task = self.process_pool().submit(
+            _worker_compile_pycodecache_kernel,
+            kernel_name,
+            source_code,
+            MAIN_SUFFIX,
+            extra_env,
+            precompile_metadata,
+        )
+        return LambdaFuture(get_result, future=task)
+
+    key, path = torch._inductor.codecache.PyCodeCache.write(source_code)
+    mod = torch._inductor.codecache.PyCodeCache.load_by_key_path(key, path)
+    main = getattr(mod, f"{kernel_name}_{MAIN_SUFFIX}")
+    return CuteDSLKernelWrapper(main, kernel_path=path)
+```
+
+This is why an Inductor-first FlyDSL path would require more than a callable kernel. It needs template selection, source rendering, a generated entry point, async compile/load behavior, cache keys, and tests for both subprocess and non-subprocess compilation.
+
 ## Native / Eager Path
 
 ### Runtime Flow
@@ -181,7 +392,7 @@ Runtime flow interpretation:
 
 ### TopK Adapter Pattern
 
-[`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] is a good pattern for FlyDSL to copy conceptually:
+[`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] is a good pattern for FlyDSL to copy conceptually. The code-level walkthrough above shows the actual predicate/import split; this table summarizes the reusable shape:
 
 | Piece | Pattern |
 |---|---|
@@ -191,6 +402,21 @@ Runtime flow interpretation:
 | `register_to_dispatch()` | Calls `cutedsl_utils.register_op_override(...)`. |
 
 The important pattern is not TopK itself. It is the split between **cheap eligibility** and **lazy runtime import**.
+
+### Eager Compile Cost Management
+
+CuteDSL eager mode can still JIT compile on a cold specialization, but it avoids paying that cost repeatedly. The `jit_cache` code path above maps to the following reusable requirements:
+
+| Mechanism | CuteDSL / QuACK behavior | FlyDSL implication |
+|---|---|---|
+| Narrow predicate | TopK checks dtype, layout, K/N support, deterministic mode, and row-count performance gates. | FlyDSL RMSNorm should only accept benchmarked `(N, dtype, layout, gfx)` combinations. |
+| Lazy import | Kernel modules are imported inside `impl`, not during registration. | FlyDSL runtime and compiler imports should happen only after `cond` matches. |
+| In-process cache | `@jit_cache` stores compiled callables in a Python dictionary. | FlyDSL wrapper should keep `CompiledFunction` handles per specialization. |
+| Persistent cache | QuACK exports compiled kernels as `.o` files and reloads them through TVM FFI; comments report roughly `~1 ms` load versus `~500 ms` regeneration. | FlyDSL should rely on its own disk cache and report cold compile versus warm cache separately. |
+| Compile-only warming | QuACK has `compile_only_mode()` with fake tensors to populate cache without launching. | FlyDSL should expose an equivalent warmup/precompile path for CI and production. |
+| Concurrency control | QuACK uses per-key file locks so multiple workers do not all compile the same cold key. | FlyDSL cache should be safe for test and multi-process workloads. |
+
+The key upstream point is that eager JIT is not forbidden, but unbounded eager JIT is unacceptable. A PyTorch native override should only trigger compilation for a small, documented support matrix with stable cache keys and clear fallback behavior.
 
 ### RMSNorm Evidence
 
@@ -314,6 +540,7 @@ Validation flow interpretation:
 | Native `cond` / `impl` override | Yes | Use for the first ROCm op. |
 | Lazy runtime import | Yes | Required because FlyDSL loads MLIR/runtime libraries. |
 | Version whitelist | Yes | Start strict, relax after API stability. |
+| Eager JIT cache | Yes | FlyDSL should provide a package-owned memory/disk cache wrapper before enabling a native override. |
 | Optional CI install | Yes | Add `install_flydsl()` only on selected ROCm jobs. |
 | Inductor template model | Later | Mirror CuteDSL once native path is stable. |
 | CuteDSL cache implementation | No | FlyDSL should use its own cache and bridge to Inductor later if needed. |
@@ -330,6 +557,7 @@ Validation flow interpretation:
 | Broad Inductor backend exposure before templates exist | `FLYDSL` should not appear as a meaningful selectable backend until at least one tested template lands. |
 | Copying op predicates mechanically | Eligibility should be rewritten around FlyDSL's supported dtypes, shapes, layouts, streams, and ROCm targets. |
 | Treating native and Inductor paths as one PR | Native overrides validate runtime safety; Inductor validates compiler integration and should land later. |
+| Assuming Inductor-first is mandatory | CuteDSL started with Inductor because its first use cases were compiler templates; FlyDSL should start where its current API is strongest. |
 
 ## Recommended FlyDSL Staging
 
