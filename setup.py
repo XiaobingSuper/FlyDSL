@@ -398,11 +398,6 @@ else:
         "flydsl._mlir": str(EMBEDDED__MLIR_REL),
     }
 
-kernel_packages = find_packages(where=str(REPO_ROOT), include=["kernels", "kernels.*"])
-all_packages = sorted(set(all_packages + kernel_packages))
-if kernel_packages:
-    package_dir["kernels"] = "kernels"
-
 _version = _read_version()
 
 setup(
