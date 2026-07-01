@@ -187,6 +187,25 @@ def register_op_override(...):
 
 This is the pattern FlyDSL should copy for `torch/_native/flydsl_utils.py`: keep PyTorch's default import path quiet, and make availability a runtime capability, not a hard dependency.
 
+The rest of `cutedsl_utils.py` is the DSL control-plane API that `python_native`
+expects every DSL utility module to implement:
+
+| Function / statement | Called by | Purpose |
+|---|---|---|
+| `dsl_registry.register_dsl("cutedsl", sys.modules[__name__])` | Runs when `torch._native.cutedsl_utils` is imported by `torch._native.__init__`. | Registers the DSL identity so `torch.backends.python_native` can list, query, and expose `python_native.cutedsl`. This does not register any aten op. |
+| `runtime_available()` | `dsl_registry.is_dsl_available()` and `python_native.available_dsls`. | Reports whether the optional runtime can be used without importing the runtime package during `import torch`. |
+| `runtime_version()` | `dsl_registry.get_dsl_version()` and diagnostics. | Reports the optional package version used for version gating and debugging. |
+| `register_op_override(...)` | Per-op adapters such as `topk/cutedsl_impl.py`. | Registers one concrete aten override only if the optional runtime is available, native JIT is enabled, and the DSL version is known-good. |
+| `deregister_op_overrides()` | `torch.backends.python_native.cutedsl.disable()`. | Disables all overrides owned by this DSL name, giving users a rollback/debug control. |
+
+This separation is important. `register_dsl(...)` makes the DSL *discoverable*;
+`register_op_override(...)` makes a specific aten op *routable* through the
+native override registry; `deregister_op_overrides()` lets the generic
+`python_native` controller turn those routes off again. FlyDSL should use the
+same shape with `flydsl_utils.py`: register the `flydsl` identity at import
+time, keep runtime/package checks import-safe, and let each op adapter call
+`flydsl_utils.register_op_override(...)` only for the ops it owns.
+
 ### 2. Native Router: `cond` First, Then Fallback
 
 `torch/_native/registry.py` turns each `(op, dispatch_key)` into a small routing graph. The key behavior is first-match-wins; if no predicate matches, the captured aten kernel is called:
