@@ -121,26 +121,34 @@ Use this as the compact mental model:
 
 ```mermaid
 flowchart LR
-    A["Control"] -->|enables| B["Native"]
-    A -->|configures| C["Compiler"]
-    B -->|calls| D["Kernels"]
-    C -->|calls| D
-    D -->|imports| E["Runtime"]
+    A["Native Control<br/>dsl_registry + python_native"] -->|enables| B["Native"]
+    C["Compiler Control<br/>Inductor config + template selection"] -->|selects| D["Compiler"]
+    E["Optional Runtime Policy"] -.-> A
+    E -.-> C
+    B -->|calls| F["Kernels"]
+    D -->|calls| F
+    F -->|imports| G["Runtime"]
 ```
 
-The key point is that the same DSL identity, `cutedsl`, is shared by user controls, native overrides, tests, and compiler paths.
+The key point is that native overrides and Inductor templates are separate
+implementation surfaces. They may share a DSL name, optional dependency policy,
+and tests, but `python_native.cutedsl` is not the compiler template selector.
 
 How to read the diagram:
 
 | Node | Concrete CuteDSL surface | What the arrow means |
 |---|---|---|
-| Control | `dsl_registry`, `python_native`, `cutedsl_utils.py` | PyTorch knows the DSL name and can enable/disable it without importing the runtime. |
+| Native Control | `dsl_registry`, `python_native`, `cutedsl_utils.py` | PyTorch knows the DSL name and can enable/disable native overrides without importing the runtime. |
 | Native | `torch/_native/registry.py`, op adapters | Eager calls may route to CuteDSL when a cheap predicate matches. |
-| Compiler | `torch/_inductor/codegen/cutedsl/*` | `torch.compile` may generate a CuteDSL template path separately from eager routing. |
+| Compiler Control | Inductor config, lowering, template selection | `torch.compile` chooses CuteDSL templates through compiler-side logic, separately from eager routing. |
+| Compiler | `torch/_inductor/codegen/cutedsl/*` | Emits and loads CuteDSL template source for selected compiler choices. |
+| Optional Runtime Policy | package/version/availability checks | Native and compiler paths can share optional-runtime policy without sharing one control plane. |
 | Kernels | QuACK / CuteDSL kernel wrappers | Native and compiler paths both eventually call external kernel code. |
 | Runtime | `nvidia-cutlass-dsl`, TVM FFI, cache helpers | Runtime import/compile happens late, not during `import torch`. |
 
-What this diagram does not mean: native overrides and Inductor templates are not the same implementation. They share the DSL identity and dependency policy, but they are separate review surfaces.
+What this diagram does not mean: enabling or disabling native CuteDSL overrides
+through `torch.backends.python_native.cutedsl` automatically enables or disables
+Inductor CuteDSL templates. Compiler choices need their own Inductor-side gates.
 
 ## Code-Level Walkthrough
 
@@ -358,6 +366,106 @@ def cutedsl(self, kernel_name: str, source_code: str, precompile_metadata=None):
 ```
 
 This is why an Inductor-first FlyDSL path would require more than a callable kernel. It needs template selection, source rendering, a generated entry point, async compile/load behavior, cache keys, and tests for both subprocess and non-subprocess compilation.
+
+### 6. CuteDSL Grouped GEMM: End-to-End Implementation Logic
+
+The most concrete GEMM example today is grouped GEMM, wired through
+[`torch/_inductor/kernel/mm_grouped.py`][pytorch-mm-grouped]. The file is not
+the kernel implementation itself. It is the Inductor lowering that gathers
+candidate implementations, gates them, and asks autotune to choose one.
+
+The high-level path is:
+
+```mermaid
+flowchart TB
+    A["aten._grouped_mm / aten._scaled_grouped_mm"] --> B["registered lowering"]
+    B --> C["derive grouped shapes and output layout"]
+    C --> D["append aten fallback"]
+    C --> E["append Triton choices"]
+    C --> F["append CuteDSL grouped GEMM choices"]
+    C --> G["append NV universal GEMM choices"]
+    D --> H["autotune_select_algorithm"]
+    E --> H
+    F --> H
+    G --> H
+    H --> I["selected TemplateBuffer / ExternKernel"]
+    I --> J["scheduler emits async_compile.*"]
+    J --> K["runtime .run(...)"]
+```
+
+`mm_grouped.py` has two public lowering entry points:
+
+| Entry | Aten op | Shared implementation |
+|---|---|---|
+| `tuned_grouped_mm(...)` | `aten._grouped_mm.default` | Calls `_tuned_grouped_mm_common(...)`. |
+| `tuned_scaled_grouped_mm(...)` | `aten._scaled_grouped_mm.default` | Calls `_tuned_grouped_mm_common(...)` with scale inputs and bf16 default output dtype. |
+
+Inside `_tuned_grouped_mm_common(...)`, the important steps are:
+
+| Step | Code shape | Purpose |
+|---|---|---|
+| Realize and shape inputs | `grouped_mm_args(...)` | Accepts 2D or 3D grouped operands, checks rank, derives output shape/stride, and creates a `FixedLayout` when one is not supplied. |
+| Add aten fallback | `ExternKernelChoice(...).bind(...)` | Keeps a safe implementation available whenever template backends are disabled or unsupported. |
+| Decode grouped layout | Branches over `len(mat_a.get_size())` and `len(mat_b.get_size())` | Computes `g`, `m`, `n`, `k`, plus `a_is_2d` and `b_is_2d`, so every backend sees the same logical grouped GEMM problem. |
+| Add Triton choices | `kernel_template.maybe_append_choice(...)` | Adds multiple Triton tile configurations after `early_config_prune(...)` removes impossible or wasteful configs. |
+| Add CuteDSL choices | `cutedsl_grouped_mm_template.maybe_append_choice(...)` | Adds CuteDSL template candidates only when the strict CuteDSL gate passes. |
+| Add NV universal GEMM | `add_nv_universal_grouped_gemm_choices(...)` | Adds another NVIDIA-specific template family for supported 2D-by-3D grouped cases. |
+| Select algorithm | `autotune_select_algorithm(...)` | Benchmarks available choices and returns the selected IR node. |
+
+The CuteDSL-specific object is created once at module import time:
+
+```python
+cutedsl_grouped_mm_template = CuteDSLTemplate(
+    name="grouped_gemm_cutedsl",
+    source=load_kernel_template("cutedsl_mm_grouped"),
+)
+```
+
+That line connects the lowering to
+`torch/_inductor/kernel/templates/cutedsl_mm_grouped.py.jinja`. The Jinja file
+contains the generated Python source shape, while the heavier grouped GEMM
+implementation lives in vendored CuteDSL/CUTLASS-facing code. In other words,
+`mm_grouped.py` selects and parameterizes a template; it does not directly
+implement the GEMM math.
+
+The CuteDSL candidate is deliberately narrow. `use_blackwell_cutedsl_grouped_mm(...)`
+checks that the runtime is available, the configured GEMM backend list includes
+`CUTEDSL`, the device and dtype match the supported Blackwell bf16 grouped GEMM
+case, shapes are static enough, layouts are compatible, and unsupported bias or
+scale-result cases are absent. Only then does the lowering loop over
+`get_groupgemm_configs()` and append CuteDSL choices:
+
+```python
+if use_blackwell_cutedsl_grouped_mm(...):
+    for config in get_groupgemm_configs():
+        cutedsl_grouped_mm_template.maybe_append_choice(
+            choices,
+            input_nodes=input_nodes,
+            layout=layout,
+            ACC_DTYPE="cutlass.Float32",
+            **asdict(config),
+        )
+```
+
+Once a CuteDSL choice is selected, the later Inductor stages are the generic
+template stages described above:
+
+| Stage | CuteDSL component | What happens |
+|---|---|---|
+| Choice creation | `CuteDSLTemplate.maybe_append_choice(...)` | Renders enough metadata to create a `CuteDSLTemplateCaller` and benchmark request. |
+| Source rendering | `CuteDSLTemplateKernel.render(...)` | Expands the Jinja template into Python source with a `{kernel_name}_main(...)` entry point. |
+| IR node | `CuteDSLTemplateCaller.output_node(...)` | Produces a `CuteDSLTemplateBuffer` so scheduling can recognize the template backend. |
+| Scheduling | `CuteDSLScheduling.codegen_template(...)` | Emits `async_compile.cutedsl(kernel_name, source, ...)` into the generated wrapper. |
+| Load | `async_compile.cutedsl(...)` | Writes source through `PyCodeCache`, imports the module, finds `{kernel_name}_main`, and wraps it in `CuteDSLKernelWrapper`. |
+| Runtime call | `CuteDSLKernelWrapper.run(...)` | The generated Inductor wrapper calls `.run(...)` with tensors, scalar args, and stream. |
+
+For FlyDSL, the key lesson is that a GEMM Inductor demo should not start by
+copying grouped GEMM wholesale. Grouped GEMM has many production gates, autotune
+configs, offset-generation helpers, and Blackwell/CUTLASS assumptions. A FlyDSL
+prototype should copy the shape of the integration, not the exact op: add one
+candidate to one lowering, emit a small generated Python launcher, load it
+through `async_compile.flydsl()`, and keep backend exposure narrow until the
+first template has tests.
 
 ## Native / Eager Path
 
