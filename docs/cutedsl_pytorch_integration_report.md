@@ -38,18 +38,21 @@ QuACK package at runtime for these vendored files; the subset is part of the
 PyTorch source tree and can be patched, reviewed, and tested with PyTorch. This
 is different from depending on a large external kernel repository.
 
-The FlyDSL analogue should keep the same separation, but there are two possible
-ways to host concrete kernel implementations:
+The FlyDSL analogue should use the PyTorch-vendored subset model for kernels
+that are part of PyTorch integration. The concrete FlyDSL kernel source used by
+PyTorch should live in a PyTorch-owned path such as
+`torch/_inductor/kernel/vendored_templates/flydsl`, while FlyDSL core remains an
+optional compiler/runtime dependency.
 
-| Model | CuteDSL precedent | FlyDSL option | Tradeoff |
-|---|---|---|---|
-| PyTorch-vendored subset | `torch/_vendor/quack` and `vendored_templates/cutedsl` | A small reviewed FlyDSL kernel subset in PyTorch. | Stable and reviewable, but PyTorch inherits synchronization and maintenance cost. |
-| External kernel API | `nvidia-cutlass-dsl` plus external/provider kernel ecosystem | A lightweight FlyDSL kernel package exposing stable `compile_*` APIs. | Better long-term ownership, but requires API/version stability and CI package policy. |
+| Layer | CuteDSL precedent | FlyDSL recommendation |
+|---|---|---|
+| DSL/compiler/runtime | `nvidia-cutlass-dsl` | FlyDSL core package; not vendored into PyTorch. |
+| PyTorch-facing kernel source | `torch/_vendor/quack`, `vendored_templates/cutedsl` | A reviewed FlyDSL kernel snapshot in PyTorch for supported native/Inductor paths. |
+| PyTorch integration | Native adapters, Inductor templates, wrappers, autotune, fallback | Thin PyTorch-owned integration around the vendored kernel snapshot. |
 
-The preferred long-term model is that FlyDSL maintains stable kernel-family APIs
-outside PyTorch, while PyTorch owns only the integration glue. A minimal
-PyTorch-vendored snapshot is reasonable for early review or bootstrap, but it
-should not turn PyTorch into the primary home of a large FlyDSL kernel library.
+This favors reviewability, CI stability, and reproducible PyTorch behavior. The
+tradeoff is that algorithm updates, tuning changes, and bug fixes for
+PyTorch-facing kernels must go through PyTorch PRs once the snapshot is vendored.
 
 ## Evidence Index
 
@@ -705,7 +708,7 @@ Validation flow interpretation:
 | Inductor template model | Yes, independently | Mirror CuteDSL when a specific FlyDSL template has a narrow support matrix, runtime gate, generated-code tests, and autotune coverage. |
 | CuteDSL cache implementation | No | FlyDSL should use its own cache and bridge to Inductor later if needed. |
 | CUDA backend gates | No | Replace with HIP/ROCm and `gfx` gates. |
-| Vendored QuACK model | Avoid initially | Prefer FlyDSL-owned package APIs over vendoring kernels. |
+| Vendored QuACK model | Yes, for PyTorch-facing kernels | Use a small reviewed FlyDSL kernel snapshot in PyTorch, analogous to CuteDSL/QuACK, while keeping FlyDSL core as the external compiler/runtime. |
 
 ## What FlyDSL Should Not Copy
 
@@ -713,7 +716,7 @@ Validation flow interpretation:
 |---|---|
 | CUDA-only availability checks | FlyDSL needs HIP/ROCm checks and `gfx` allowlists, not CUDA architecture assumptions. |
 | CuteDSL/CUTLASS cache behavior | FlyDSL already has its own compiler/cache lifecycle; PyTorch should bridge to it only where Inductor requires. |
-| QuACK-style vendoring as the first step | Vendoring kernels increases PyTorch ownership and review burden; start with stable FlyDSL package APIs. |
+| Vendoring the FlyDSL compiler/runtime | Only small PyTorch-facing kernel snapshots should be vendored; the FlyDSL compiler/runtime should remain external. |
 | Broad Inductor backend exposure before templates exist | `FLYDSL` should not appear as a meaningful selectable backend until at least one tested template lands. |
 | Copying op predicates mechanically | Eligibility should be rewritten around FlyDSL's supported dtypes, shapes, layouts, streams, and ROCm targets. |
 | Treating native and Inductor paths as one PR | Native overrides validate runtime safety; Inductor validates compiler integration. They should stay independently reviewable even when developed in parallel. |

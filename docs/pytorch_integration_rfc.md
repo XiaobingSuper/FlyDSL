@@ -108,52 +108,71 @@ Decision statement:
 
 ## Kernel Ownership Decision
 
-FlyDSL integration should not make PyTorch depend on a large external kernel
-repository. This RFC adopts the following kernel ownership policy for concrete
-FlyDSL kernel implementations once the integration grows beyond a single
-prototype. There are two viable hosting models:
+For PyTorch upstream integration, the concrete FlyDSL kernel implementation used
+by PyTorch should follow the CuteDSL/QuACK precedent: PyTorch owns a reviewed,
+vendored kernel snapshot for the supported PyTorch integration surface.
 
-| Model | Description | Pros | Cons | Best use |
-|---|---|---|---|---|
-| PyTorch-vendored kernel subset | PyTorch carries a small reviewed subset under a path analogous to `torch/_vendor/quack` or `torch/_inductor/kernel/vendored_templates/flydsl`. | Reviewable in PyTorch, stable for CI, no external kernel package drift. | PyTorch owns synchronization and can accumulate kernel maintenance burden. | Small stable kernels needed for upstream review or bootstrap. |
-| FlyDSL-maintained kernel package/API | FlyDSL provides stable kernel-family APIs such as `compile_hgemm_kernel(...)`; PyTorch calls them through thin wrappers. | Kernel iteration stays with FlyDSL, PyTorch remains thin, easier to expand dtype/layout/kernel families. | Requires API/version stability and CI package policy. | Long-term backend growth. |
+For Inductor templates, the expected location is:
 
-Recommended direction:
+```text
+torch/_inductor/kernel/vendored_templates/flydsl/
+```
 
-- Short term: PyTorch may vendor a very small, reviewed kernel snapshot when it
-  makes the first integration PR reviewable and reproducible.
-- Long term: FlyDSL should expose stable kernel-family APIs from a lightweight
-  FlyDSL kernel package or module, while PyTorch owns only integration glue.
+This does not mean PyTorch vendors the FlyDSL compiler/runtime. The FlyDSL core
+package still owns the DSL language, compiler, MLIR lowering, runtime ABI,
+streams, and artifact cache semantics. PyTorch owns the PyTorch-facing kernel
+source snapshot, wrappers, gates, autotune integration, fallback behavior, and
+tests.
 
-The intended long-term split is:
+This is the same ownership style used by existing CuteDSL integrations:
+
+| CuteDSL precedent | Meaning |
+|---|---|
+| `torch/_vendor/quack` | PyTorch carries a reviewed subset of a CuteDSL kernel library. |
+| `torch/_inductor/kernel/vendored_templates/cutedsl` | PyTorch carries template/kernel source needed by Inductor integration. |
+| `nvidia-cutlass-dsl` | The compiler/runtime remains an optional external DSL dependency. |
+
+Recommended policy:
+
+- PyTorch should own the FlyDSL kernel source that is part of a PyTorch
+  integration PR, under `torch/_inductor/kernel/vendored_templates/flydsl` or an
+  equivalent PyTorch-owned vendored path.
+- FlyDSL core should remain an optional compiler/runtime dependency and should
+  not be vendored into PyTorch.
+- The vendored kernel set should stay scoped to kernels that PyTorch actually
+  integrates, tests, and supports.
+- Kernel algorithm updates, tuning changes, and bug fixes for PyTorch-facing
+  kernels should go through PyTorch PRs once those kernels are vendored.
+
+Pros and cons of this decision:
+
+| Pros | Cons |
+|---|---|
+| Kernel source is visible to PyTorch reviewers. | PyTorch owns synchronization with any external FlyDSL source of truth. |
+| CI and release behavior are stable because the kernel snapshot is pinned in the PyTorch tree. | Kernel algorithm updates, tuning changes, and bug fixes require PyTorch PRs. |
+| No extra kernel-library package is needed beyond the FlyDSL compiler/runtime dependency. | Scaling to many dtype/layout/workload families can increase PyTorch maintenance burden. |
+| The integration is reproducible and reviewable like CuteDSL/QuACK. | Kernel iteration follows PyTorch review and release cadence. |
+
+The intended split is:
 
 ```mermaid
 flowchart TB
-    A["PyTorch integration"] --> B["Thin wrappers and gates"]
-    A --> C["Inductor templates and autotune"]
+    A["PyTorch integration"] --> B["Runtime gates + wrappers"]
+    A --> C["Inductor templates + autotune"]
+    A --> F["Vendored FlyDSL kernel snapshot"]
     D["FlyDSL core"] --> E["DSL language, compiler, runtime, cache"]
-    F["FlyDSL kernel package"] --> G["Stable compile_* kernel APIs"]
-    B --> F
-    C --> F
     F --> D
 ```
 
 | Layer | Owns | Should not own |
 |---|---|---|
-| PyTorch integration | Runtime gates, aten/Inductor eligibility, tensor/layout adaptation, generated wrappers, autotune integration, fallback, tests. | FlyDSL compiler internals, large kernel collections, tuning databases for every workload. |
+| PyTorch integration | Runtime gates, aten/Inductor eligibility, tensor/layout adaptation, generated wrappers, vendored PyTorch-facing FlyDSL kernels, autotune integration, fallback, tests. | FlyDSL compiler internals or unsupported external kernel collections. |
 | FlyDSL core | DSL language, compiler, MLIR lowering, runtime ABI, stream support, artifact cache semantics. | PyTorch dispatcher semantics or Inductor lowering policy. |
-| FlyDSL kernel package | Stable kernel-family APIs such as `compile_hgemm_kernel`, future grouped GEMM helpers, dtype/layout-specific kernels, benchmarks, and configs. | PyTorch-specific tensor view adaptation or fallback policy. |
 
 This mirrors the distinction in the CuteDSL ecosystem: CuteDSL provides
 language/compiler/runtime capabilities, while QuACK or vendored template sources
-provide concrete kernels. FlyDSL should not collapse those layers into one
-monolithic compiler/runtime package, and PyTorch should not become the primary
-home of a large FlyDSL kernel library.
-
-`torch/_vendor/quack` is a precedent for a carefully scoped vendored subset, not
-a requirement that FlyDSL kernels must live under `torch/_vendor`. FlyDSL should
-use that model only when a small reviewed snapshot is necessary for PyTorch
-reviewability or CI stability.
+provide concrete kernels maintained in the PyTorch tree for the supported
+integration surface.
 
 ## Reference: CuteDSL in PyTorch
 
@@ -174,10 +193,10 @@ gates.
 CuteDSL also illustrates that kernel implementations can come from more than one
 source. Some concrete kernels are carried as PyTorch-vendored source, such as
 `torch/_vendor/quack` or `torch/_inductor/kernel/vendored_templates/cutedsl`,
-while other GEMM candidates are discovered through `cutlass_api`. FlyDSL should
-use the same ownership distinction: PyTorch owns integration glue and possibly a
-small reviewed snapshot; FlyDSL owns long-term kernel APIs and compiler/runtime
-behavior.
+while other GEMM candidates are discovered through `cutlass_api`. For the FlyDSL
+PyTorch integration proposed here, the PyTorch-facing kernel implementation
+should follow the vendored-source model, while FlyDSL core owns the compiler and
+runtime behavior.
 
 ## Native / Eager Design
 
@@ -324,11 +343,11 @@ flowchart LR
 
 | Area | Direction | Boundary |
 |---|---|---|
-| Dtype families | Add fp16, fp8, scaled GEMM, and mixed precision as separate families when tensor metadata or compile-time parameters differ. | PyTorch selects the family through dtype/layout gates; FlyDSL owns kernel implementation. |
+| Dtype families | Add fp16, fp8, scaled GEMM, and mixed precision as separate families when tensor metadata or compile-time parameters differ. | PyTorch selects the family through dtype/layout gates; PyTorch owns the vendored kernel snapshot for supported families; FlyDSL core owns compiler/runtime behavior. |
 | Layout families | Start with row-major A plus transpose-view B. Add contiguous B, prepacked B, and other stride forms only after wrapper ABI is explicit. | Jinja wrapper adapts PyTorch layouts; kernel code remains DSL-centric. |
 | Shape regimes | Separate small-M decode, medium GEMM, and large prefill-like shapes in config heuristics. | Inductor prunes configs before autotune. |
 | Config search | Move from a small manual config set to structured search over tile shape, stages, split-K, warp partitioning, and LDS policy. | PyTorch owns search/pruning policy; FlyDSL owns legal parameter space. |
-| Grouped/expert GEMM | Add after single GEMM stabilizes. Define metadata for group offsets, per-group shapes, strides, and workspace. | Inductor wrapper owns metadata construction; FlyDSL kernel owns execution. |
+| Grouped/expert GEMM | Add after single GEMM stabilizes. Define metadata for group offsets, per-group shapes, strides, and workspace. | Inductor wrapper owns metadata construction; the vendored FlyDSL kernel snapshot owns the PyTorch-facing execution path. |
 | Fusion/epilogue | Add bias, activation, scale, and store epilogues after unfused GEMM is stable. | Inductor decides fusion profitability; FlyDSL exposes epilogue-capable APIs. |
 | Cache/AOT | Define stable compile keys by dtype, layout family, tile config, arch, and kernel family. | FlyDSL owns artifact format; Inductor owns selection/generation cache. |
 
@@ -417,10 +436,10 @@ If accepted, implementation should proceed through the rollout plan above. The
 native/eager track should prove optional-runtime import safety, user controls,
 schema-compatible adapters, and fallback. The Inductor/compiler track should
 keep the hgemm support matrix narrow, host thin integration glue in PyTorch, and
-only carry a small reviewed kernel snapshot when that is necessary for review or
-bootstrap. Long-term kernel implementation should move behind stable FlyDSL
-kernel-family APIs while PyTorch continues to own eligibility, wrappers,
-autotune integration, fallback, and tests.
+carry the reviewed FlyDSL kernel snapshot needed by the PyTorch-facing
+integration. FlyDSL core remains the optional compiler/runtime dependency, while
+PyTorch owns eligibility, wrappers, vendored kernel source for supported
+templates, autotune integration, fallback, and tests.
 
 The next major design work after the current prototypes is GEMM family expansion:
 fp16, fp8/scaled GEMM, layout variants, structured config search, and
