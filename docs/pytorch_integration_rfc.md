@@ -4,556 +4,306 @@ Status: Draft
 Authors: FlyDSL contributors  
 Companion analysis: `docs/cutedsl_pytorch_integration_report.md`
 
+## Summary
+
+This RFC proposes integrating FlyDSL as an optional ROCm Python DSL backend in
+PyTorch through two independent planes:
+
+- native/eager dispatcher overrides through `torch._native`;
+- TorchInductor compiler templates through Inductor lowering, template choices,
+  async compile/load, and autotune.
+
+The first native/eager prototype targets RMSNorm. The first Inductor prototype
+targets bf16 hgemm for `aten.mm(A, B.T)`. Future work should expand from this
+foundation toward broader GEMM dtype/layout coverage, grouped/expert GEMM,
+fusion/epilogues, cache/AOT, and workload integrations.
+
+The core design principle is additive integration. FlyDSL should be a selectable
+backend candidate with strict gates and fallback, not a required dependency and
+not a replacement for existing Aten, Triton, CK, CKTile, or vendor backends.
+
 ## Motivation
 
-PyTorch already has multiple extension points for Python GPU DSLs:
+PyTorch already has several extension points for Python GPU DSLs:
 
-- `torch._native` for eager/native dispatcher overrides with aten fallback.
-- `torch.backends.python_native` for native/eager DSL enable/disable controls.
-- `torch._inductor.codegen.*` for template-based compiler backends used by `torch.compile`.
-- test and CI utilities for optional DSL runtimes, version gates, and skip behavior.
+- `torch._native` for eager/native dispatcher overrides with aten fallback;
+- `torch.backends.python_native` for native/eager DSL enable and disable controls;
+- `torch._inductor.codegen.*` for template-based compiler backends used by
+  `torch.compile`;
+- optional dependency and test utilities for runtime gates and skip behavior.
 
-CuteDSL uses these extension points for CUDA. FlyDSL is a ROCm-oriented Python DSL with an MLIR lowering pipeline, `torch.Tensor` ABI support, stream support, and JIT/runtime caching. The goal of this RFC is to define how FlyDSL should plug into the same PyTorch DSL architecture without adding FlyDSL as a required PyTorch dependency or destabilizing existing ROCm execution paths.
+CuteDSL uses these extension points on CUDA. FlyDSL is a ROCm-oriented Python DSL
+with an MLIR lowering pipeline, tensor ABI support, stream support, and
+JIT/runtime caching. FlyDSL should plug into PyTorch through the same style of
+optional DSL architecture, while preserving PyTorch default behavior on systems
+without FlyDSL.
 
 ## Goals
 
 1. Add FlyDSL as an optional ROCm DSL runtime known to PyTorch.
-2. Reuse existing PyTorch DSL infrastructure instead of inventing a FlyDSL-specific integration path.
-3. Support both eager/native overrides and an Inductor template path without coupling their control planes.
-4. Keep the FlyDSL compiler/runtime outside PyTorch while allowing PyTorch to host narrowly scoped integration kernel sources and wrappers.
-5. Preserve aten behavior for unsupported platforms, package versions, dtypes, shapes, layouts, and architectures.
-6. Use RMSNorm as the first native override candidate, and `aten.mm(A, B.T)` hgemm as the first Inductor template candidate.
-7. Provide a staged implementation plan that can be reviewed as small, independently owned PRs.
-
-## Current Prototype Snapshot
-
-The current PyTorch prototype has split the work into independent branches:
-
-| Branch | Scope | Status |
-|---|---|---|
-| Native/eager | FlyDSL RMSNorm through `torch._native` and `python_native` controls | Separate native branch; not required by Inductor. |
-| Inductor/compiler | FlyDSL hgemm template for `aten.mm(A, B.T)` on ROCm | Implemented as an Inductor-only branch with focused tests and autotune coverage. |
-
-The Inductor prototype intentionally does not depend on `torch._native.dsl_registry` or `torch.backends.python_native.flydsl`. It uses Inductor's existing GEMM autotune backend controls (`max_autotune_gemm_backends="FLYDSL"`) plus an Inductor-local optional runtime gate. This keeps native/eager rollback and compiler-template selection separate.
-
-## User and Maintainer Impact
-
-| Audience | Impact |
-|---|---|
-| PyTorch users without FlyDSL | No behavior change; FlyDSL remains unavailable and silent by default. |
-| ROCm users with FlyDSL installed | Eligible calls may use FlyDSL kernels; unsupported calls fall back to aten. |
-| PyTorch maintainers | Review PyTorch-owned native op predicates, fallback behavior, and the FlyDSL kernel source used by the native op. |
-| FlyDSL maintainers | Provide stable package versions, compiler/runtime compatibility, JIT/cache behavior, and packaging fixes. |
+2. Reuse PyTorch's existing native/eager and Inductor extension points.
+3. Keep native/eager controls independent from Inductor compiler controls.
+4. Keep the FlyDSL compiler/runtime outside PyTorch.
+5. Preserve aten behavior for unsupported platforms, package versions, dtypes,
+   shapes, layouts, and architectures.
+6. Use RMSNorm as the first native/eager prototype.
+7. Use bf16 hgemm for `aten.mm(A, B.T)` as the first Inductor template prototype.
+8. Provide a staged rollout plan that can be reviewed as small, independently
+   owned PRs.
 
 ## Non-Goals
 
 | Non-goal | Reason |
 |---|---|
 | Make `flydsl` a required PyTorch dependency | PyTorch default installs must remain unchanged. |
-| Vendor FlyDSL's MLIR compiler into PyTorch | The compiler is large and should remain FlyDSL-owned. |
-| Replace CK, CKTile, Triton, or aten ROCm kernels | FlyDSL is an optional accelerator path. |
-| Land native overrides and Inductor support in one PR | These are different review surfaces. |
-| Turn FlyDSL into a PyTorch-bundled kernel library | PyTorch should host only the native-op FlyDSL kernel sources it owns and reviews; reusable external kernel APIs can remain a separate FlyDSL concern. |
+| Vendor FlyDSL's MLIR compiler into PyTorch | The compiler/runtime should remain FlyDSL-owned. |
+| Replace CK, CKTile, Triton, Aten, or vendor libraries | FlyDSL is an optional accelerator/backend candidate. |
+| Land native/eager and Inductor support in one PR | They are different review surfaces with different failure modes. |
+| Claim full GEMM backend coverage from the first hgemm prototype | The current Inductor prototype is intentionally narrow. |
+| Claim MoE support from grouped GEMM primitives alone | MoE needs routing metadata, wrapper ABI, validation, and workload benchmarks. |
 
-## Existing PyTorch DSL Architecture
+## Current Prototype Status
 
-PyTorch's current DSL integration is easier to reason about as separate native/eager and compiler planes. FlyDSL should plug into each plane using the same shape as existing DSLs, instead of introducing a FlyDSL-only path.
+The current PyTorch prototypes are split into independent branches:
+
+| Branch | Scope | Status |
+|---|---|---|
+| Native/eager | FlyDSL RMSNorm through `torch._native` and `python_native` controls | Implemented separately; not required by Inductor. |
+| Inductor/compiler | FlyDSL bf16 hgemm template for `aten.mm(A, B.T)` on ROCm | Implemented as an Inductor-only prototype with focused tests and autotune coverage. |
+
+The Inductor prototype intentionally does not depend on
+`torch._native.dsl_registry` or `torch.backends.python_native.flydsl`. It uses
+Inductor GEMM autotune backend controls plus an Inductor-local runtime gate. This
+keeps eager/native rollback and compiler-template selection separate.
+
+## Architecture Decision
+
+FlyDSL integration should use two independent control planes:
 
 ```mermaid
 flowchart LR
-    A["Native Control<br/>dsl_registry + python_native"] -->|enable/disable| B["Native / Eager"]
-    C["Compiler Control<br/>Inductor config + template selection"] -->|select/compile| D["Compiler / Inductor"]
-    E["Optional Runtime Policy<br/>install/version/availability"] -.-> A
+    A["Native Control<br/>dsl_registry + python_native"] --> B["Native / Eager"]
+    C["Compiler Control<br/>Inductor config + template selection"] --> D["Compiler / Inductor"]
+    E["Optional Runtime Policy"] -.-> A
     E -.-> C
-    B -->|prove| F["Validation"]
-    D -->|prove| F
+    B --> F["Validation"]
+    D --> F
 ```
 
-Diagram legend:
-
-| Node | Meaning |
-|---|---|
-| Native Control | Registers the DSL identity, exposes `torch.backends.python_native.flydsl`, and controls eager/native overrides without importing the runtime. |
-| Native / Eager | Adds eager dispatcher overrides with cheap predicates, lazy FlyDSL imports, and aten fallback. |
-| Compiler Control | Uses Inductor config, lowering, template selection, and async compile/load. It does not require the native DSL registry. |
-| Compiler / Inductor | Adds Inductor template integration through `FlyDSLTemplate`, scheduling, async compile, and autotune. |
-| Optional Runtime Policy | Package install and availability rules. Native and compiler paths may share checks, but they must not share the same control plane. |
-| Validation | Tests import safety, optional dependency behavior, correctness, fallback, native user controls, compiler codegen, and autotune. |
-
-The important dependency is not that every plane must land together. Native control and native RMSNorm can land independently from Inductor hgemm. Inductor should have its own compiler-side controls; it should not depend on `torch._native.dsl_registry` or `python_native` routing.
-
-The planes are independent enough to land in stages:
-
-| Plane | Existing PyTorch mechanism | What FlyDSL adds | First PR? |
-|---|---|---|---|
-| Native control | `torch._native.dsl_registry`, `torch.backends.python_native` | Register `flydsl`, expose `python_native.flydsl` | Yes |
-| Native / eager | `torch._native.registry`, per-op `cond` / `impl` wrappers | ROCm op adapters plus PyTorch-hosted FlyDSL kernel sources that lazily import the FlyDSL runtime | After control |
-| Compiler / Inductor | Inductor config, `KernelTemplate`, scheduling, `async_compile.*`, autotune | `FlyDSLTemplate`, `FlyDSLScheduling`, `async_compile.flydsl`, hgemm template choices | Independent PR |
-| Validation | optional package install, skip helpers, smoke tests, OpInfo, Inductor generated-code tests | FlyDSL CI install and tests | Yes, then expand |
-
-CuteDSL currently uses this architecture for CUDA:
-
-| Plane | CuteDSL implementation | FlyDSL equivalent |
+| Plane | Existing PyTorch mechanism | FlyDSL addition |
 |---|---|---|
-| Native control | [`torch.backends.python_native.cutedsl`][pytorch-python-native] | `torch.backends.python_native.flydsl` |
-| Native/eager | [`torch/_native/cutedsl_utils.py`][pytorch-cutedsl-utils], op wrappers, PyTorch-hosted DSL kernel files | `torch/_native/flydsl_utils.py`, ROCm op wrappers, PyTorch-hosted FlyDSL kernel files |
-| Compiler | [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl] | `torch/_inductor/codegen/flydsl/` |
-| Validation | [CI install helper][pytorch-ci-common-utils], smoke tests, OpInfo | `install_flydsl`, smoke tests, OpInfo |
+| Native control | `torch._native.dsl_registry`, `torch.backends.python_native` | Register `flydsl` and expose native/eager controls. |
+| Native/eager | `torch._native.registry`, per-op `cond` / `impl` wrappers | ROCm op adapters with lazy FlyDSL imports and aten fallback. |
+| Compiler/Inductor | Inductor lowering, templates, scheduling, `async_compile.*`, autotune | `FlyDSLTemplate`, `FlyDSLScheduling`, `async_compile.flydsl`, and hgemm choices. |
+| Validation | Optional package install, smoke tests, OpInfo, compiler tests | FlyDSL CI install and focused native/Inductor tests. |
 
-The dependency model should also mirror CuteDSL: PyTorch may carry the kernel/helper source that belongs to a PyTorch integration, while the DSL compiler/runtime remains an optional, explicitly installed Python package. CuteDSL code imports `cutlass` from `nvidia-cutlass-dsl`; FlyDSL code should import `flydsl` from the optional FlyDSL package.
+Decision statement:
 
-### Reference Material
+> Native `python_native.flydsl` controls must not be used as the Inductor
+> template selector. Native/eager overrides and Inductor templates may share
+> optional runtime policy, but their routing and rollback mechanisms must remain
+> separate.
 
-These files are useful companion reads when reviewing or implementing this RFC:
+## Reference: CuteDSL in PyTorch
 
-| Topic | Reference | Why it helps |
+CuteDSL is the closest PyTorch precedent, but it is not a single mechanism. It
+currently appears across multiple surfaces:
+
+| Surface | CuteDSL examples | Lesson for FlyDSL |
 |---|---|---|
-| PyTorch native DSL contract | PyTorch: [`torch/_native/README.md`][pytorch-native-readme] | Defines `cond` / `impl`, lazy imports, FakeTensor constraints, logging, and OpInfo expectations. |
-| PyTorch DSL registry | PyTorch: [`torch/_native/dsl_registry.py`][pytorch-dsl-registry], [`torch/_native/registry.py`][pytorch-native-registry] | Shows how DSL availability and dispatcher override routing are represented. |
-| Native user controls | PyTorch: [`torch/backends/python_native/__init__.py`][pytorch-python-native] | Shows the shared `torch.backends.python_native.<dsl>` control surface for native/eager overrides. |
-| RMSNorm schemas | PyTorch: [`aten/src/ATen/native/native_functions.yaml`][pytorch-native-functions] | Shows `aten.rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
-| CuteDSL native adapters | PyTorch: [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl], [`torch/_native/ops/scatter_add/cutedsl_impl.py`][pytorch-scatter-cutedsl] | Concrete examples of cheap predicates plus lazy runtime imports. |
-| CuteDSL RMSNorm OpInfo | PyTorch: [`torch/testing/_internal/common_methods_invocations.py`][pytorch-common-methods] | Shows the existing CuteDSL RMSNorm sample-input pattern. |
-| CuteDSL compiler templates | PyTorch: [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl], [`torch/_inductor/async_compile.py`][pytorch-async-compile] | Interface-level model for the FlyDSL Inductor path. |
-| FlyDSL kernel authoring | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | Shows `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, launch shape, and cache behavior. |
-| FlyDSL RMSNorm coverage | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing correctness and benchmark shape source for the proposed MVP op. |
-| FlyDSL test and benchmark flow | FlyDSL: `docs/testing_benchmarking_guide.md` | Explains GPU kernel tests, selective benchmark execution, and expected output format. |
+| Native/eager | TopK, ScatterAdd, fused RMSNorm through QuACK | Optional runtime, cheap predicates, lazy imports, aten fallback. |
+| Inductor templates | grouped GEMM, FlexAttention forward/backward, FlexGEMM epilogue | Template choices, generated wrappers, async compile/load, scheduling. |
+| Universal GEMM | NVGEMM through `cutlass_api` for GEMM/scaled GEMM/grouped GEMM candidates | Registry-style kernel discovery and heuristic ranking can be a later maturity goal. |
+| Runtime/cache policy | optional package installs, runtime gates, compile/cache helpers | Missing runtime must not change PyTorch default behavior. |
 
-## Proposed Implementation
+The reusable pattern is the optional DSL architecture, not CUDA-specific details.
+FlyDSL should replace CUDA/CUTLASS assumptions with ROCm/HIP and `gfx`-specific
+gates.
 
-This RFC proposes one architecture with staged implementation. Native/eager and Inductor/compiler support should be reviewed as separate planes. The native path proves dispatcher override semantics and user controls; the Inductor path proves template rendering, async compile/load, autotune benchmarking, and generated runtime invocation.
+## Native / Eager Design
 
-### Proposed Code Layout
+### Technical Principle
 
-The implementation should be reviewed by file group, not as one large directory tree.
-
-| Stage | File or directory | Change | Purpose |
-|---:|---|---|---|
-| 1 | `torch/_native/flydsl_utils.py` | New | FlyDSL availability, version gate, register/deregister wrappers. |
-| 1 | `torch/_native/__init__.py` | Small edit | Import `flydsl_utils` so the DSL name is registered. |
-| 1 | `test/python_native/test_flydsl_registry.py` | New | Verify missing FlyDSL is silent and controls are exposed only when available. |
-| 2 | `.ci/pytorch/common_utils.sh` | Small edit | Add `install_flydsl()` for selected ROCm jobs. |
-| 2 | `test/python_native/test_flydsl_smoketest.py` | New | Compile and run a tiny FlyDSL kernel on ROCm. |
-| 3 | `torch/_native/ops/norm/flydsl_rmsnorm_impl.py` | New | First RMSNorm eager/native adapter. |
-| 3 | `torch/_native/ops/norm/flydsl_kernels.py` | New | PyTorch-hosted FlyDSL RMSNorm DSL kernel source and launch wrapper. |
-| 3 | `torch/_native/flydsl_cache.py` | New | Shared in-process specialization cache for FlyDSL native-op compile wrappers. |
-| 3 | `test/python_native/test_rmsnorm_flydsl.py` | New | Correctness, fallback, cache reuse, and user-disable coverage. |
-| 4 | `torch/testing/_internal/common_utils.py` | Small edit | Add `TEST_FLYDSL` / skip helper if generic helper is insufficient. |
-| 4 | `torch/testing/_internal/common_methods_invocations.py` | Small edit | Add OpInfo entries for FlyDSL-covered ops. |
-| 5 | `torch/_inductor/codegen/flydsl/` | New | FlyDSL template, scheduling, kernel wrapper, and runtime availability helper for Inductor. |
-| 5 | `torch/_inductor/async_compile.py` | Small edit | Add `async_compile.flydsl()` for generated Python source compile/load. |
-| 5 | `torch/_inductor/autotune_process.py` | Small edit | Add `FlyDSLBenchmarkRequest` so Inductor autotune can benchmark FlyDSL choices. |
-| 5 | `torch/_inductor/kernel/mm.py` | Small edit | Append FlyDSL hgemm choices for eligible static ROCm `aten.mm(A, B.T)` shapes. |
-| 5 | `torch/_inductor/kernel/templates/flydsl_mm.py.jinja` | New | Generated Python wrapper that adapts PyTorch tensors to the vendored FlyDSL hgemm kernel. |
-| 5 | `torch/_inductor/kernel/vendored_templates/flydsl/kernels/` | New | Reviewed hgemm kernel source and tensor shim used by the template. |
-| 5 | `torch/_inductor/template_heuristics/flydsl_gemm.py` | New | FlyDSL hgemm autotune configs and pruning. |
-| 5 | `test/inductor/test_flydsl_template.py` | New | Generated-code, runtime, and autotune coverage for FlyDSL hgemm. |
-
-The expected ownership boundary is:
-
-| PyTorch contains | FlyDSL package contains |
-|---|---|
-| Availability checks and native/eager user controls | Python DSL frontend |
-| Dispatcher predicates and schema adapters | MLIR compiler and ROCm lowering |
-| Native-op FlyDSL kernel source for PyTorch-owned overrides | JIT artifact cache and arch-specific codegen |
-| Shared native-op specialization cache wrapper | Runtime libraries and packaging |
-| CI/test integration | Example kernels, benchmarks, and reusable non-PyTorch integrations |
-| Optional Inductor template glue, generated wrappers, and reviewed vendored hgemm kernel source | Compiler APIs used by templates |
-
-### Maintenance Contract
-
-| Owner | Owns | Does not own |
-|---|---|---|
-| PyTorch | DSL registry entry, native/eager user controls, dispatcher predicates, schema adapters, PyTorch-hosted FlyDSL kernel source, native-op specialization cache helper, optional-runtime policy checks, and tests that protect PyTorch behavior. | FlyDSL compiler internals, ROCm lowering, persistent artifact cache implementation, FlyDSL package releases. |
-| FlyDSL | Compiler/runtime APIs called by PyTorch, supported package versions, JIT artifact cache, ROCm runtime packaging, release/version compatibility. | PyTorch dispatcher semantics, aten schema compatibility, PyTorch CI policy, PyTorch-owned native-op kernel code. |
-
-PyTorch should be able to disable or remove a FlyDSL adapter without changing FlyDSL's package. FlyDSL should be able to update its compiler/runtime/cache implementation without PyTorch code changes, as long as the public compiler APIs used by the PyTorch-hosted kernels remain compatible.
-
-### Native Control Plane
-
-The native control plane makes FlyDSL visible to eager/native PyTorch overrides without importing the FlyDSL runtime. This is intentionally separate from Inductor controls, which should live with Inductor config and template selection.
+Native/eager integration is a dispatcher override with fallback:
 
 ```mermaid
 flowchart LR
-    A["import torch"] -->|imports| B["_native"]
-    B -->|metadata| C["register"]
-    C -->|exposes| D["python_native"]
-    D -->|reports| E["state"]
+    A["import torch"] --> B["register DSL identity"]
+    B --> C["register op override"]
+    C --> D["user calls aten op"]
+    D --> E["cheap cond"]
+    E -->|true| F["lazy FlyDSL impl"]
+    E -->|false| G["aten fallback"]
 ```
 
-Native control plane responsibilities:
+The key invariants are:
 
-| Step | What happens | What must not happen |
-|---|---|---|
-| `import torch` | PyTorch imports `torch._native` as part of normal initialization. | No FlyDSL package import, no ROCm runtime initialization, no device query. |
-| `_native` | Imports `flydsl_utils.py` so the DSL name can be registered. | No kernel module import and no architecture probing. |
-| `register` | Adds `flydsl` to the generic DSL registry using metadata/spec checks. | No operator override is required in the first PR. |
-| `python_native` | Exposes `torch.backends.python_native.flydsl` when the DSL is known. | No FlyDSL-specific public API beyond the generic DSL control surface. |
-| `state` | Reports enabled/disabled, available/unavailable, and version information. | Missing FlyDSL should not warn or change behavior by default. |
+- `import torch` must not import FlyDSL or initialize ROCm runtime state.
+- The predicate must be cheap, schema-compatible, and side-effect free.
+- Unsupported cases return `False` and use aten fallback.
+- The implementation may lazily import FlyDSL and use compile/cache helpers.
+- Users must have a rollback path through `python_native`.
 
-Reviewer focus for this native plane:
+### FlyDSL Native Prototype
 
-| Question | Expected answer |
-|---|---|
-| Does `import torch` remain fork-safe? | Yes; only metadata/spec checks are allowed. |
-| Can users disable FlyDSL native overrides globally? | Yes, through `torch.backends.python_native.flydsl.enabled = False`. This does not define the Inductor template control surface. |
-| Does unsupported package/version state change aten behavior? | No; FlyDSL simply remains unavailable. |
-
-`torch/_native/flydsl_utils.py` should mirror the existing DSL utility contract:
-
-- `runtime_available() -> bool`
-- `runtime_version() -> Version | None`
-- `register_op_override(...) -> None`
-- `deregister_op_overrides() -> None`
-
-Availability checks must be import-safe:
-
-```python
-_FLYDSL_DSL_NAME = "flydsl"
-_FLYDSL_REQUIRED_VERSIONS = {Version("0.2.2")}
-
-@functools.cache
-def _check_runtime_available() -> tuple[bool, Version | None]:
-    if not _cuda.is_built():
-        return False, None
-
-    import torch
-    if torch.version.hip is None:
-        return False, None
-
-    reason = _unavailable_reason([("flydsl", "flydsl")])
-    if reason is not None:
-        log.info("FlyDSL operators require optional package `flydsl`; %s", reason)
-        return False, None
-
-    return True, _available_version("flydsl")
-```
-
-The check must not:
-
-- `import flydsl`
-- call `torch.cuda.is_available()`
-- call `torch.cuda.get_device_properties()`
-- call `flydsl.runtime.device.get_rocm_arch()`
-- run `rocm_agent_enumerator`
-
-### Native / Eager Plane
-
-Native overrides should be used for the first real FlyDSL kernels because they provide the smallest behavioral surface and a clear fallback story.
+The first native prototype is RMSNorm:
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant Dispatcher as PyTorch dispatcher
-    participant Router as torch._native router
-    participant Cond as FlyDSL cond
-    participant Impl as FlyDSL adapter
-    participant Kernel as PyTorch-hosted FlyDSL kernel
-    participant Fly as flydsl compiler/runtime
-    participant Aten as original aten ROCm kernel
-
-    User->>Dispatcher: aten op
-    Dispatcher->>Router: dispatch
-    Router->>Cond: gates
-    alt eligible
-        Cond-->>Router: true
-        Router->>Impl: adapter
-        Impl->>Kernel: lazy import
-        Kernel->>Fly: lazy compiler/runtime import
-        Kernel-->>User: result
-    else not eligible
-        Cond-->>Router: false
-        Router->>Aten: fallback
-        Aten-->>User: result
-    end
+flowchart LR
+    A["FlyDSL runtime gate"] --> B["DSL identity registered"]
+    B --> C["RMSNorm override"]
+    C --> D["RMSNorm cond"]
+    D --> E["lazy FlyDSL kernel import"]
+    E --> F["compile cache + launch"]
 ```
 
-MVP native operator: RMSNorm.
+RMSNorm is a good first native target because it has an existing aten surface,
+bounded support predicates, existing FlyDSL tests, and a smaller behavioral
+surface than GEMM or MoE.
 
-| Candidate | Reason |
-|---|---|
-| RMSNorm | Primary MVP. PyTorch already has `aten.rms_norm` / `_fused_rms_norm`, CuteDSL already has RMSNorm OpInfo coverage, and FlyDSL already has `tests/kernels/test_rmsnorm.py`. |
-| LayerNorm | Backup candidate if RMSNorm forward/backward API or benchmark evidence is not ready. |
+Native follow-up work should include:
 
-Initial predicate policy:
+- stabilizing runtime and version gates;
+- adding ROCm CI smoke coverage;
+- adding OpInfo and user-control tests;
+- measuring native cold compile, warm cache, and fallback behavior;
+- evaluating additional native ops only when eager execution has clear value.
 
-| Check | Initial rule |
-|---|---|
-| Backend | `tensor.is_cuda` and `torch.version.hip is not None`. |
-| Package | Register only for known-good FlyDSL versions. |
-| Dtype | Start with bf16/f16 or another benchmarked subset. |
-| Shape | Static rank and bounded hidden sizes. |
-| Layout | Contiguous or explicitly supported stride patterns. |
-| Architecture | Allowlist tested `gfx` targets. |
-| Unsupported case | Return `False`; do not raise. |
+## Inductor / Compiler Design
 
-PyTorch adapter responsibilities:
+### Technical Principle
 
-- Match the aten schema exactly.
-- Allocate outputs in PyTorch when needed.
-- Convert tensors/streams using FlyDSL's public compiler/runtime API.
-- Keep FlyDSL imports lazy by importing kernel modules only from override implementations.
-- Preserve autograd behavior by targeting existing aten/fused op semantics or explicit forward/backward pairs.
-- Avoid recursive dispatcher calls inside the override implementation.
-
-### Eager JIT Compile and Cache Policy
-
-FlyDSL kernels are JIT-compiled, so the native/eager path must not compile arbitrary code on every eligible aten call. The PyTorch predicate should only decide whether the input is eligible. The PyTorch-hosted kernel module may then use a narrow native-op specialization cache before calling FlyDSL's compiler API. FlyDSL still owns the lower-level compiler artifact cache and optional persistent cache.
-
-| Policy | Requirement |
-|---|---|
-| Cold compile is exceptional | The first call for a supported specialization may compile, but only after a strict predicate has proven the case is supported and expected to benefit. |
-| Warm cache is the performance path | Steady-state benchmarks must report warm-cache runtime separately from first-run compile cost. |
-| Stable native-op specialization key | PyTorch should key the native-op compiled callable over the values that affect generated code, such as normalized dimension, dtype, arch, compile backend, and variant. Runtime tensors and streams must not enter this key. |
-| Runtime dimensions stay runtime | Batch/row count should be runtime where possible; compile-specialized dimensions such as RMSNorm `N` must be bounded and documented. |
-| Persistent cache is FlyDSL-owned | The FlyDSL package should own compiler artifact memory/disk cache behavior. PyTorch should not manage FlyDSL compiler internals or artifact formats. |
-| Native-op cache is PyTorch-owned | PyTorch may keep a small in-process cache of `flyc.compile(...)` results to avoid rebuilding launchers and re-entering the compile path on every eligible call. |
-| Cache warming is desirable | A compile-only or prewarm mode should be available for CI, benchmarking, and production warmup. |
-| Fallback remains safe | Unsupported or unbenchmarked cases return `False` from `cond` and use aten; they should not trigger surprise compilation. |
-
-The native adapter remains the schema-compatible `cond` / `impl` wrapper shown below. The cache-sensitive part should live next to the PyTorch-hosted FlyDSL kernel source, while FlyDSL's compiler still owns persistent artifacts. A representative shape is:
-
-```python
-# In PyTorch: torch/_native/flydsl_cache.py
-@jit_cache
-def _compile_rmsnorm(n: int, dtype: str, arch: str, backend: str, *, compile_args):
-    input_2d, weight, output_2d, rows_m, stream = compile_args
-    launch = _build_rmsnorm_module(n, dtype)
-    return flyc.compile(
-        launch,
-        _make_compile_arg(input_2d),
-        flyc.from_torch_tensor(weight),
-        _make_compile_arg(output_2d),
-        rows_m,
-        stream,
-    )
-
-
-def rmsnorm(input, normalized_shape, weight=None, eps=None):
-    n = int(normalized_shape[0])
-    rows_m = input.numel() // n
-    output = torch.empty_like(input)
-    stream = current_stream()
-
-    compiled = _compile_rmsnorm(
-        n,
-        dtype_to_flydsl(input.dtype),
-        current_gfx_target(),
-        flyc.compile_backend_name(),
-        compile_args=(input, weight, output, rows_m, stream),
-    )
-
-    compiled(input, weight, output, rows_m, stream)
-    return output
-```
-
-This is illustrative, not a required public API shape. The invariant is that PyTorch's `cond` remains cheap, the kernel implementation remains visible in the PyTorch review surface, and FlyDSL can evolve its internal compiler cache layout and persistent artifact format behind its public compiler API.
-
-Autograd policy for the MVP:
-
-| Scope | Policy |
-|---|---|
-| Inference-only RMSNorm | Acceptable for the first performance experiment only if the override targets an inference-only aten path and tests make that explicit. |
-| Training/autograd RMSNorm | Requires a forward/backward pair or a schema whose existing autograd behavior is preserved. |
-| Unsupported gradient cases | Must fall back to aten rather than returning partial FlyDSL behavior. |
-
-FlyDSL responsibilities:
-
-- Provide stable compiler/runtime functions callable by PyTorch-hosted kernels.
-- Own ROCm lowering, runtime library packaging, persistent artifact cache behavior, and compiler version compatibility.
-- Document compiler/runtime requirements and any cache/prewarm knobs used by PyTorch CI.
-
-PyTorch responsibilities for the first kernel:
-
-- Own the native-op FlyDSL kernel source under `torch/_native/ops/...`.
-- Own the support predicate, fallback policy, and tests.
-- Own a small in-process specialization cache helper for native-op compile wrappers.
-- Document supported dtype/shape/layout/arch combinations for the PyTorch override.
-
-Illustrative native adapter shape:
-
-```python
-# torch/_native/ops/norm/flydsl_rmsnorm_impl.py
-# NOTE: illustrative only; final signature must match the selected aten schema.
-import torch
-
-from ... import flydsl_utils as fu
-
-_RMSNORM_OP = "rms_norm"
-_SUPPORTED_HIDDEN_SIZES = {128, 256, 512, 1024, 2048, 4096, 8192}
-
-
-def _cond(input, normalized_shape, weight=None, eps=None) -> bool:
-    if len(normalized_shape) != 1:
-        return False
-
-    hidden_size = int(normalized_shape[0])
-    return (
-        fu.runtime_available()
-        and torch.version.hip is not None
-        and input.is_cuda
-        and input.dtype in (torch.float16, torch.bfloat16)
-        and input.is_contiguous()
-        and input.shape[-1] == hidden_size
-        and hidden_size in _SUPPORTED_HIDDEN_SIZES
-    )
-
-
-def _impl(input, normalized_shape, weight=None, eps=None):
-    from .flydsl_kernels import rmsnorm  # lazy FlyDSL runtime import
-
-    return rmsnorm(input, normalized_shape, weight, eps)
-
-
-def register_to_dispatch() -> None:
-    fu.register_op_override(
-        "aten",
-        _RMSNORM_OP,
-        "CUDA",
-        cond=_cond,
-        impl=_impl,
-    )
-```
-
-The key points are the same as [`torch/_native/README.md`][pytorch-native-readme]: `cond` is cheap and schema-compatible, `_impl` lazily imports FlyDSL, and unsupported cases are handled by returning `False` from `_cond`. If the first implementation chooses `_fused_rms_norm` instead of `rms_norm`, the adapter must also cover the fused op's tuple output and backward/autograd contract.
-The dispatch key string remains `"CUDA"` because PyTorch uses the CUDA backend key for both CUDA and HIP/ROCm tensor backends; ROCm-specific behavior is gated by `torch.version.hip is not None` and architecture predicates.
-
-### Compiler / Inductor Plane
-
-Inductor support is now a concrete prototype rather than a future placeholder. It should remain an Inductor-only integration: FlyDSL choices are selected through compiler-side GEMM lowering, template selection, async compile/load, and autotune benchmark plumbing rather than through the native `python_native` override router.
+Inductor integration is compile-time backend selection:
 
 ```mermaid
-flowchart TB
-    A["aten.mm lowering"] -->|eligible ROCm hgemm case| B["FlyDSLTemplate choices"]
-    B --> C["flydsl_mm.py.jinja generated wrapper"]
-    C --> D["async_compile.flydsl(kernel_name, source)"]
-    D --> E["PyCodeCache imports generated module"]
-    E --> F["FlyDSLKernelWrapper.run(...)"]
-    F --> G["compile_hgemm_kernel(...)"]
-    G --> H["_run_compiled(..., stream)"]
+flowchart LR
+    A["torch.compile"] --> B["FX graph"]
+    B --> C["aten lowering"]
+    C --> D["backend choices"]
+    D --> E["benchmark requests"]
+    E --> F["autotune winner"]
+    F --> G["generated runtime code"]
 ```
 
-The compiler plane mirrors the CuteDSL template model at the interface level:
+A backend candidate needs:
 
-| Interface | FlyDSL role | Current implementation |
-|---|---|---|
-| Lowering | Existing Inductor GEMM lowering | `torch/_inductor/kernel/mm.py` appends FlyDSL choices only when ROCm, dtype, layout, shape, and backend gates pass. |
-| Template | `FlyDSLTemplate` | Creates one `ChoiceCaller` per hgemm config. |
-| Source | `FlyDSLTemplateKernel` plus `flydsl_mm.py.jinja` | Renders generated Python and defines the `{kernel_name}_main(...)` entry point expected by Inductor. |
-| Compile/load | `async_compile.flydsl()` | Writes/loads generated Python through `PyCodeCache` and returns `FlyDSLKernelWrapper`. |
-| Run | `FlyDSLKernelWrapper.run(...)` | Provides the `.run(..., stream=...)` shape expected by generated Inductor code. |
-| Benchmark request | `FlyDSLBenchmarkRequest` | Loads generated FlyDSL source during autotune and returns a callable benchmark closure. |
+| Object | Role |
+|---|---|
+| Lowering hook | Decides whether to append backend choices for an op. |
+| ChoiceCaller | Represents one candidate implementation. |
+| BenchmarkRequest | Runs the candidate during autotune. |
+| TemplateBuffer | Stores the selected template output in Inductor IR. |
+| Scheduling backend | Emits compile/load/runtime code for the selected template. |
+| Async compile entry | Loads generated source and returns a runtime wrapper. |
 
-Current hgemm support matrix:
+### Current FlyDSL hgemm Prototype
+
+The current Inductor prototype targets bf16 hgemm for `aten.mm(A, B.T)`:
+
+```mermaid
+flowchart LR
+    A["aten.mm lowering"] --> B["FlyDSL eligibility gate"]
+    B --> C["hgemm configs"]
+    C --> D["Jinja wrapper"]
+    D --> E["async_compile.flydsl"]
+    E --> F["FlyDSL hgemm kernel"]
+```
+
+Current support matrix:
 
 | Topic | Current decision |
 |---|---|
-| Op | `aten.mm(A, B.T)` style matmul. Inductor sees RHS as a `[K, N]` transpose view with `stride[0] == 1`; the generated wrapper adapts it to the FlyDSL kernel's `[N, K]` expectation. |
-| Dtypes | `torch.float16` and `torch.bfloat16`. The old fp32 naive demo path has been removed. |
-| Shapes | Static 2D inputs only. `N` must be divisible by `TILE_N`, `K` by `TILE_K`, and `K // SPLIT_K // TILE_K >= STAGES`. |
-| Layout | `mat1` and output are row-major contiguous along the K/N dimension; RHS must match the documented transpose-view pattern. |
-| Autotune | Multiple FlyDSL hgemm configs are emitted through `torch/_inductor/template_heuristics/flydsl_gemm.py`. The focused test currently benchmarks three `TILE_M` choices. |
-| Fusion | No horizontal or vertical fusion in the first template. |
-| Runtime availability | Inductor-local import-safe helper checks ROCm, optional `flydsl`, `_mlir` bindings, and unresolved runtime shared library dependencies before appending choices. |
-| Fallback | If any gate fails, no FlyDSL choice is appended and existing Inductor choices continue unchanged. |
+| Op | `aten.mm(A, B.T)` style matmul. Inductor sees RHS as a `[K, N]` transpose view and the wrapper adapts it to FlyDSL's `[N, K]` expectation. |
+| Dtype | Current report/prototype focus is bf16 hgemm. |
+| Shape | Static 2D inputs. `N` must be divisible by `TILE_N`, `K` by `TILE_K`, and `K // SPLIT_K // TILE_K >= STAGES`. |
+| Layout | `mat1` and output are row-major along K/N; RHS must match the transpose-view pattern. |
+| Autotune | Multiple FlyDSL hgemm configs are emitted and benchmarked. |
+| Fallback | If any gate fails, no FlyDSL choice is appended. Existing Inductor choices continue unchanged. |
 
-The PyTorch-side code is intentionally split between stable kernel source and generated wrapper:
+### Kernel and Wrapper Boundary
 
-| Piece | File | Purpose |
-|---|---|---|
-| Template runtime/codegen | `torch/_inductor/codegen/flydsl/` | Template object, choice caller, scheduling, wrapper, and runtime availability helper. |
-| Async compile | `torch/_inductor/async_compile.py` | `async_compile.flydsl()` compiles generated Python source through `PyCodeCache`. |
-| Autotune benchmark | `torch/_inductor/autotune_process.py` | `FlyDSLBenchmarkRequest` lets `autotune_select_algorithm` benchmark FlyDSL choices. |
-| Lowering hook | `torch/_inductor/kernel/mm.py` | Adds FlyDSL hgemm choices only for supported `aten.mm` cases. |
-| Generated wrapper | `torch/_inductor/kernel/templates/flydsl_mm.py.jinja` | Injects autotune constants, prepares semaphores, adapts PyTorch tensor layouts, and launches the vendored FlyDSL hgemm kernel. |
-| Vendored kernel | `torch/_inductor/kernel/vendored_templates/flydsl/kernels/hgemm_splitk.py` | Reviewed FlyDSL kernel implementation, kept free of PyTorch tensor runtime adaptation. |
-| Tensor shim | `torch/_inductor/kernel/vendored_templates/flydsl/kernels/tensor_shim.py` | Minimal tensor/view helpers and `_run_compiled` launch helper used by generated wrappers. |
-| Heuristics | `torch/_inductor/template_heuristics/flydsl_gemm.py` | hgemm config generation and pruning. |
+The first hgemm template should be treated as the seed of a GEMM family. PyTorch
+and FlyDSL should keep a clear boundary:
 
-This separation is important for upstream review. The vendored kernel should look like a stable FlyDSL kernel API. PyTorch-specific concerns such as tensor shape adaptation, semaphore allocation, stream lookup, and autotune parameter injection belong in the Jinja-generated wrapper and Inductor codegen layer.
-
-The first implementation deliberately avoids:
-
-| Area | Constraint |
+| Layer | Responsibility |
 |---|---|
-| Native dependency | Do not require `torch._native.flydsl_utils`, `dsl_registry`, or `torch.backends.python_native.flydsl`. |
-| Broad backend default | Do not add FlyDSL to broad default backend lists. The path is selected by existing GEMM autotune backend controls. |
-| Naive fp32 demo | Do not keep toy kernels once hgemm is available. |
-| Generic GEMM coverage | Do not route arbitrary `aten.mm` shapes into FlyDSL. |
-| Public API | Do not expose a new public user-facing Inductor flag until the support matrix and CI story are stable. |
+| Inductor lowering | Decide whether a FlyDSL family is eligible and append choices. |
+| Template heuristics | Generate/prune configs before autotune. |
+| Jinja wrapper | Adapt PyTorch tensors, layouts, streams, semaphores, and compile-time constants. |
+| Vendored FlyDSL kernel | Implement the DSL kernel without PyTorch tensor-specific adaptation. |
+| FlyDSL runtime | Own compiler/runtime internals and artifact format. |
 
-Focused validation currently runs `test/inductor/test_flydsl_template.py`, including an hgemm `torch.compile` case with `max_autotune_gemm=True` and `max_autotune_gemm_backends="FLYDSL"`. The autotune log should show multiple `flydsl_mm_flydsl_*` choices and a selected best kernel.
+## GEMM Family Expansion Design
 
-### Validation Plane
-
-Validation should match existing optional DSL patterns.
+Future GEMM expansion should be organized by kernel family and support matrix
+instead of accumulating unrelated flags in one template.
 
 ```mermaid
-flowchart TB
-    A["Registry"] -->|safe import| B["Smoke"]
-    B -->|runtime OK| C["Native RMSNorm"]
-    C -->|correct| D["OpInfo"]
-    B -->|runtime OK| E["Inductor hgemm"]
-    E -->|generated code + autotune| F["Compiler tests"]
+flowchart LR
+    A["bf16 hgemm"] --> B["fp16 hgemm"]
+    B --> C["fp8 / scaled GEMM"]
+    C --> D["layout variants"]
+    D --> E["grouped / expert GEMM"]
+    E --> F["MoE workload integration"]
 ```
 
-Validation gates:
-
-| Gate | Minimum proof | Failure behavior |
+| Area | Direction | Boundary |
 |---|---|---|
-| Native registry | Missing FlyDSL is silent; `python_native` state is correct for native overrides; no runtime import. | Do not register FlyDSL as available for native overrides. |
-| Smoke | A tiny FlyDSL kernel compiles and runs only on selected ROCm CI jobs. | Skip outside supported ROCm jobs. |
-| RMSNorm | Supported cases match aten/reference; unsupported cases fall back. | Predicate returns `False`; aten runs. |
-| OpInfo | DSL-specific samples exercise supported shapes and user-disable behavior. | Do not broaden default coverage. |
-| Compiler | Generated source, async compile/load, autotune benchmark, runtime launch, and fallback are tested. | Keep `FLYDSL` out of broad backend choices. |
+| Dtype families | Add fp16, fp8, scaled GEMM, and mixed precision as separate families when tensor metadata or compile-time parameters differ. | PyTorch selects the family through dtype/layout gates; FlyDSL owns kernel implementation. |
+| Layout families | Start with row-major A plus transpose-view B. Add contiguous B, prepacked B, and other stride forms only after wrapper ABI is explicit. | Jinja wrapper adapts PyTorch layouts; kernel code remains DSL-centric. |
+| Shape regimes | Separate small-M decode, medium GEMM, and large prefill-like shapes in config heuristics. | Inductor prunes configs before autotune. |
+| Config search | Move from a small manual config set to structured search over tile shape, stages, split-K, warp partitioning, and LDS policy. | PyTorch owns search/pruning policy; FlyDSL owns legal parameter space. |
+| Grouped/expert GEMM | Add after single GEMM stabilizes. Define metadata for group offsets, per-group shapes, strides, and workspace. | Inductor wrapper owns metadata construction; FlyDSL kernel owns execution. |
+| Fusion/epilogue | Add bias, activation, scale, and store epilogues after unfused GEMM is stable. | Inductor decides fusion profitability; FlyDSL exposes epilogue-capable APIs. |
+| Cache/AOT | Define stable compile keys by dtype, layout family, tile config, arch, and kernel family. | FlyDSL owns artifact format; Inductor owns selection/generation cache. |
 
-Test categories:
+Implementation guidance:
 
-| Test | Purpose |
-|---|---|
-| Registry unavailable tests | Missing FlyDSL must be silent and safe. |
-| Version-gate tests | Unsupported versions should not register overrides. |
-| Smoke test | Compile and run a minimal FlyDSL kernel on ROCm. |
-| Native op tests | Compare FlyDSL result against aten/reference. |
-| Fallback tests | Unsupported dtype/shape/arch must use aten. |
-| Native user-control tests | `torch.backends.python_native.flydsl.enabled = False` disables native overrides. |
-| Inductor tests | Generated code, async compile/load, hgemm runtime correctness, autotune choice benchmarking, and fallback by omission. |
-
-CI should add a narrow helper for selected ROCm jobs:
-
-```bash
-function install_flydsl() {
-  if [[ "${BUILD_ENVIRONMENT}" != *rocm* ]]; then
-    echo "Skipping FlyDSL install: ROCm job required"
-    return 0
-  fi
-
-  pip_install flydsl==0.2.2
-}
-```
-
-## Review Boundary
-
-This RFC asks reviewers to agree on the integration architecture and staging, not to approve every future FlyDSL kernel.
-
-| In scope for this RFC | Out of scope for this RFC |
-|---|---|
-| FlyDSL as an optional PyTorch-known DSL runtime | Making FlyDSL a required dependency |
-| Reusing `torch._native` and `python_native` control paths for native/eager overrides | Replacing existing ROCm backends |
-| A path for Inductor templates scoped to hgemm | Approving a full Inductor backend today |
-| Hosting small PyTorch-owned FlyDSL native-op kernels in PyTorch | Vendoring FlyDSL's compiler/runtime into PyTorch |
-| Staged CI and correctness testing | Broad performance claims for all FlyDSL kernels |
+- Keep PyTorch tensor adaptation in generated wrappers.
+- Avoid one monolithic `compile_gemm_kernel(...)` with unrelated flags for bf16,
+  fp8, scaled, and grouped kernels.
+- Prefer a small family dispatcher in the wrapper that calls separate stable
+  compile helpers.
+- Add each dtype/layout family with focused correctness, generated-code, and
+  autotune tests before broadening the lowering gate.
 
 ## Rollout Plan
 
-| PR | Scope | Expected review focus |
-|---:|---|---|
-| 1 | `flydsl_utils.py`, DSL registry exposure, unavailable-runtime tests | import safety, optional dependency behavior |
-| 2 | ROCm CI install helper, FlyDSL smoke test | package stability, CI cost |
-| 3 | First RMSNorm native adapter plus PyTorch-hosted FlyDSL RMSNorm kernel source | schema compatibility, fallback, correctness, kernel-source reviewability |
-| 4 | OpInfo and native user-control tests | integration with existing DSL test machinery |
-| 5 | Inductor hgemm template prototype | compiler integration, async compile/load, runtime availability, hgemm support matrix, autotune |
-| 6 | Broader shapes, second op, or CI expansion | benchmark evidence and support matrix |
+Native/eager and Inductor/compiler work should be reviewed as separate tracks
+while sharing runtime policy and CI setup.
+
+| Stage | Native / eager track | Inductor / compiler track | Exit criteria |
+|---:|---|---|---|
+| 1 | Register FlyDSL as an optional DSL; add unavailable-runtime tests. | None. | Import safety and no default behavior change. |
+| 2 | Add ROCm CI install helper and smoke test. | Reuse CI install path for compiler tests. | Package/runtime viability. |
+| 3 | Add RMSNorm native adapter and kernel wrapper. | None. | Correctness, fallback, cache behavior. |
+| 4 | Add OpInfo, user-control tests, and cold/warm cache reporting. | None. | Native test coverage and observable runtime behavior. |
+| 5 | Keep native track stable and independent. | Land bf16 hgemm template prototype. | Template rendering, async compile/load, autotune, narrow support matrix. |
+| 6 | Evaluate next native op only with benchmark evidence. | Expand GEMM dtype/layout support: fp16, fp8/scaled GEMM, more shapes/gfx targets. | Separate support matrices and config pruning. |
+| 7 | Continue fallback and OpInfo coverage for any new native op. | Add grouped/expert GEMM template and metadata ABI. | Group offsets, per-group shapes, workspace, benchmarks. |
+| 8 | Keep native wrappers focused on eager semantics. | Add fusion/epilogue, persistent cache, and AOT exploration. | Predictable compile/runtime behavior. |
+| 9 | Revisit native expansion only for ops with real eager value. | Explore FlexAttention-style kernels, attention-adjacent matmul APIs, and MoE through grouped GEMM. | Maintainable workload-level path. |
+
+## Validation and Acceptance Criteria
+
+Validation should match existing optional DSL patterns:
+
+| Gate | Minimum proof | Failure behavior |
+|---|---|---|
+| Native registry | Missing FlyDSL is silent; native controls behave correctly; no runtime import. | FlyDSL remains unavailable. |
+| Smoke | A tiny FlyDSL kernel compiles and runs on selected ROCm CI jobs. | Skip outside supported jobs. |
+| Native op | Supported cases match aten/reference; unsupported cases fall back. | Predicate returns `False`. |
+| Compiler | Generated source, async compile/load, runtime launch, autotune, fallback by omission. | No FlyDSL choice is appended. |
+| GEMM expansion | Each dtype/layout family has support matrix, config search space, selected configs, correctness, and fallback coverage. | Family remains disabled in lowering. |
+| Grouped GEMM | Grouped/expert GEMM correctness, metadata ABI, workspace behavior, and serving-shape benchmarks. | No MoE-level performance claims. |
+
+Performance reporting should separate:
+
+- cold compile cost;
+- persistent-cache load cost;
+- warm runtime latency;
+- autotune benchmarking time;
+- selected config and backend winner.
 
 ## Compatibility
 
@@ -561,92 +311,36 @@ Default behavior should not change.
 
 | Environment | Expected behavior |
 |---|---|
-| CPU-only PyTorch | FlyDSL unavailable, no import error, no warning by default. |
+| CPU-only PyTorch | FlyDSL unavailable; no import error. |
 | CUDA/NVIDIA PyTorch | FlyDSL unavailable because `torch.version.hip is None`. |
-| ROCm PyTorch without FlyDSL | FlyDSL unavailable, aten behavior unchanged. |
-| ROCm PyTorch with supported FlyDSL | Eligible calls may use FlyDSL; unsupported calls use aten. |
-| User disables FlyDSL native overrides | All FlyDSL eager/native overrides are disabled and aten behavior is restored. |
-
-Compatibility invariants:
-
-| Invariant | Required behavior |
-|---|---|
-| Import safety | `import torch` must not import `flydsl` or initialize ROCm runtime state. |
-| Missing package | Missing FlyDSL is silent by default and visible only through availability APIs or debug logs. |
-| Unsupported version | No FlyDSL overrides are registered unless the version is known-good or explicitly bypassed for development. |
-| Unsupported inputs | Predicates return `False`; aten handles the call. |
-| Native user disable | `torch.backends.python_native.flydsl.enabled = False` restores aten behavior for eager/native overrides. |
-| CPU/CUDA builds | No behavior change. |
-
-## Test Matrix
-
-| Scenario | Expected result |
-|---|---|
-| CPU-only PyTorch | FlyDSL unavailable; tests skip or verify silent no-op. |
-| CUDA/NVIDIA PyTorch | FlyDSL unavailable because `torch.version.hip is None`. |
-| ROCm PyTorch without `flydsl` | FlyDSL unavailable; aten behavior unchanged. |
-| ROCm PyTorch with unsupported FlyDSL version | Runtime visible as unavailable for native overrides. |
-| ROCm PyTorch with supported FlyDSL version | Smoke kernel compiles and runs. |
-| FlyDSL native overrides disabled via `python_native` | RMSNorm uses aten fallback. |
-| RMSNorm unsupported dtype/shape/layout/arch | Predicate returns `False`; aten fallback. |
-| RMSNorm supported dtype/shape/layout/arch | FlyDSL output matches aten/reference within tolerance. |
-| Inductor hgemm supported `aten.mm(A, B.T)` | Generated code contains `async_compile.flydsl`; autotune benchmarks FlyDSL choices; output matches PyTorch reference. |
-| Inductor hgemm unsupported dtype/shape/layout | No FlyDSL choice is appended; existing Inductor choices handle the op. |
-
-## Performance Acceptance Criteria
-
-The first native RMSNorm PR should include benchmark evidence before enabling the override by default. The first Inductor hgemm PR should additionally show autotune evidence for each emitted FlyDSL template choice.
-
-| Requirement | Detail |
-|---|---|
-| Hardware | Report exact ROCm version and `gfx` target, e.g. `gfx942` or `gfx950`. |
-| Shapes | Report the allowlisted hidden sizes and batch sizes used by the predicate. |
-| Dtypes | Report only the dtypes enabled by the predicate. |
-| Baseline | Compare against the aten or existing fused PyTorch ROCm implementation that fallback would use. |
-| Regression policy | Shapes outside the benchmarked support matrix must fall back to aten. |
-| Compile cost | Report first-run compile behavior separately from warm-cache runtime. |
-| Cache behavior | Report in-process hit, persistent-cache load, and cold-compile behavior for supported shapes. |
-| Inductor autotune | Report the number of FlyDSL choices, selected best kernel, and focused shape used by `test/inductor/test_flydsl_template.py`. |
-
-## Open Questions
-
-1. Which exact FlyDSL package versions should PyTorch whitelist?
-2. Which `gfx` targets should be considered supported in the first RMSNorm PR?
-3. Should cold eager compilation be allowed on first eligible native call, or should the override require explicit cache warmup before enabling?
-4. Should PyTorch-hosted FlyDSL kernels be mirrored as FlyDSL examples, or should examples remain separate from PyTorch-native sources?
-5. Which `gfx` targets should the Inductor hgemm template gate explicitly allow before CI coverage is available?
-6. Should the Inductor runtime availability helper remain compiler-local, or be factored into a shared optional-runtime helper after native and compiler paths stabilize?
+| ROCm PyTorch without FlyDSL | FlyDSL unavailable; aten behavior unchanged. |
+| ROCm PyTorch with supported FlyDSL | Eligible calls may use FlyDSL; unsupported calls use aten or existing Inductor choices. |
+| User disables FlyDSL native overrides | Eager/native FlyDSL overrides are disabled; Inductor controls remain separate. |
 
 ## Implementation Checklist
 
-Before opening the first PyTorch PR, the implementation should be able to answer:
+Before opening PyTorch PRs, each stage should be able to answer:
 
 | Check | Expected answer |
 |---|---|
-| Import safety | `import torch` does not import `flydsl`, initialize ROCm, or query device properties. |
+| Import safety | `import torch` does not import FlyDSL, initialize ROCm, or query device properties. |
 | Optional dependency | Missing or unsupported FlyDSL leaves PyTorch behavior unchanged. |
-| Native user rollback | `torch.backends.python_native.flydsl.enabled = False` restores aten behavior for eager/native overrides. |
-| First op schema | The adapter names the exact aten op, overload, outputs, and autograd behavior. |
-| Support matrix | Enabled dtype, shape, layout, and `gfx` targets match tested FlyDSL coverage. |
-| Native-op cache | PyTorch uses a stable specialization key and excludes runtime tensors/streams from the key. |
-| FlyDSL artifact cache | FlyDSL's compiler/runtime cache behavior is observable enough to report cold compile, persistent-cache load, and warm runtime separately. |
-| Correctness | Supported RMSNorm cases match aten/reference within documented tolerance. |
-| Performance | Benchmarks separate first-run compile cost from warm-cache runtime. |
+| Native rollback | `torch.backends.python_native.flydsl.enabled = False` restores eager/native aten behavior. |
+| First op schema | The native adapter names the exact aten op, overload, outputs, and autograd behavior. |
+| Native support matrix | dtype, shape, layout, and `gfx` targets match tested coverage. |
+| Native cache | Compile keys exclude runtime tensors and streams where possible. |
 | Inductor hgemm | Focused `torch.compile` test covers generated source, `async_compile.flydsl`, runtime correctness, and multi-choice autotune. |
+| GEMM family boundaries | bf16/fp16/fp8/scaled/grouped kernels have documented wrapper ABI, compile-time parameters, and tests before enabling in lowering. |
+| Roadmap split | Native/eager and Inductor/compiler work are tracked independently with shared optional-runtime policy. |
 
 ## Resolution / Next Steps
 
-If accepted, implementation should proceed in the rollout order above. Native/eager work should prove optional-runtime import safety and user controls. The Inductor hgemm work should stay on its own branch, keep the support matrix narrow, host only reviewed template/kernel glue in PyTorch, and rely on the optional FlyDSL package only for compiler/runtime services.
+If accepted, implementation should proceed through the rollout plan above. The
+native/eager track should prove optional-runtime import safety, user controls,
+schema-compatible adapters, and fallback. The Inductor/compiler track should
+keep the hgemm support matrix narrow, host only reviewed template/kernel glue in
+PyTorch, and rely on the optional FlyDSL package for compiler/runtime services.
 
-[pytorch-native-readme]: https://github.com/pytorch/pytorch/blob/main/torch/_native/README.md
-[pytorch-cutedsl-utils]: https://github.com/pytorch/pytorch/blob/main/torch/_native/cutedsl_utils.py
-[pytorch-dsl-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/dsl_registry.py
-[pytorch-native-registry]: https://github.com/pytorch/pytorch/blob/main/torch/_native/registry.py
-[pytorch-python-native]: https://github.com/pytorch/pytorch/blob/main/torch/backends/python_native/__init__.py
-[pytorch-ci-common-utils]: https://github.com/pytorch/pytorch/blob/main/.ci/pytorch/common_utils.sh
-[pytorch-native-functions]: https://github.com/pytorch/pytorch/blob/main/aten/src/ATen/native/native_functions.yaml
-[pytorch-topk-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/topk/cutedsl_impl.py
-[pytorch-scatter-cutedsl]: https://github.com/pytorch/pytorch/blob/main/torch/_native/ops/scatter_add/cutedsl_impl.py
-[pytorch-common-methods]: https://github.com/pytorch/pytorch/blob/main/torch/testing/_internal/common_methods_invocations.py
-[pytorch-inductor-cutedsl]: https://github.com/pytorch/pytorch/tree/main/torch/_inductor/codegen/cutedsl
-[pytorch-async-compile]: https://github.com/pytorch/pytorch/blob/main/torch/_inductor/async_compile.py
+The next major design work after the current prototypes is GEMM family expansion:
+fp16, fp8/scaled GEMM, layout variants, structured config search, and
+grouped/expert GEMM as the foundation for future workload integration.
