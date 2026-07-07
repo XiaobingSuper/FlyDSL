@@ -11,12 +11,45 @@ PyTorch's CuteDSL integration is not a single feature. It is a combination of fo
 |---|---|---|
 | Native DSL registry | Make `cutedsl` discoverable and controllable without importing the runtime. | Directly reusable. |
 | Dispatcher override router | Replace selected aten CUDA calls when `cond` matches, otherwise fall back. | Directly reusable for ROCm native ops. |
-| Inductor template backend | Add CuteDSL template choices during `torch.compile`. | Reusable later, but not first. |
+| Inductor template backend | Add CuteDSL template choices during `torch.compile`. | Reusable as an independent compiler track when a tested FlyDSL template exists. |
 | Optional dependency testing | Install runtime only on selected CI jobs and skip elsewhere. | Directly reusable. |
 
 The main upstream lesson:
 
 > CuteDSL was accepted where it behaved like an optional acceleration layer: no default dependency, no import-time runtime load, strict gates, and aten fallback for unsupported cases.
+
+## Kernel Ownership Model
+
+CuteDSL integration in PyTorch separates the language/runtime from concrete
+kernel implementations:
+
+```mermaid
+flowchart TB
+    A["nvidia-cutlass-dsl"] --> B["DSL language + compiler + runtime"]
+    C["QuACK / vendored template sources"] --> D["Concrete kernels"]
+    E["PyTorch integration"] --> F["routing, wrappers, autotune, fallback"]
+    F --> D
+    D --> B
+```
+
+`torch/_vendor/quack` is best understood as a PyTorch-vendored subset of an
+external CuteDSL kernel library. PyTorch does not need to install the upstream
+QuACK package at runtime for these vendored files; the subset is part of the
+PyTorch source tree and can be patched, reviewed, and tested with PyTorch. This
+is different from depending on a large external kernel repository.
+
+The FlyDSL analogue should keep the same separation, but there are two possible
+ways to host concrete kernel implementations:
+
+| Model | CuteDSL precedent | FlyDSL option | Tradeoff |
+|---|---|---|---|
+| PyTorch-vendored subset | `torch/_vendor/quack` and `vendored_templates/cutedsl` | A small reviewed FlyDSL kernel subset in PyTorch. | Stable and reviewable, but PyTorch inherits synchronization and maintenance cost. |
+| External kernel API | `nvidia-cutlass-dsl` plus external/provider kernel ecosystem | A lightweight FlyDSL kernel package exposing stable `compile_*` APIs. | Better long-term ownership, but requires API/version stability and CI package policy. |
+
+The preferred long-term model is that FlyDSL maintains stable kernel-family APIs
+outside PyTorch, while PyTorch owns only the integration glue. A minimal
+PyTorch-vendored snapshot is reasonable for early review or bootstrap, but it
+should not turn PyTorch into the primary home of a large FlyDSL kernel library.
 
 ## Evidence Index
 
@@ -42,7 +75,7 @@ For a reviewer who wants to connect this report to concrete code, the fastest pa
 | 3 | PyTorch: [`torch/_native/ops/topk/cutedsl_impl.py`][pytorch-topk-cutedsl] | A compact native adapter pattern: cheap eligibility check, lazy kernel import, and schema-compatible wrapper. |
 | 4 | PyTorch: [`torch/backends/python_native/__init__.py`][pytorch-python-native] | How users enable, disable, inspect, or reorder Python-native DSL overrides. |
 | 5 | PyTorch: [`aten/src/ATen/native/native_functions.yaml`][pytorch-native-functions] | The RMSNorm schemas: `rms_norm`, `_fused_rms_norm`, and `_fused_rms_norm_backward`. |
-| 6 | PyTorch: [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl] | The compiler-side template shape that FlyDSL should mirror later, not in the first PR. |
+| 6 | PyTorch: [`torch/_inductor/codegen/cutedsl/`][pytorch-inductor-cutedsl] | The compiler-side template shape that FlyDSL can mirror in an independent Inductor track. |
 | 7 | FlyDSL: `docs/kernel_authoring_guide.md`, `examples/01-vectorAdd.py` | How FlyDSL exposes `@flyc.kernel`, `@flyc.jit`, tensor arguments, streams, and launch configuration. |
 | 8 | FlyDSL: `tests/kernels/test_rmsnorm.py` | Existing RMSNorm correctness, dtype, shape, and benchmark scaffolding for the proposed MVP. |
 
@@ -77,7 +110,7 @@ FlyDSL should copy this shape, not the CUDA-specific details around CUTLASS/Cute
 
 ## Integration Chronology
 
-CuteDSL's upstream path did not start with native/eager overrides. The compiler template path came first because the earliest PyTorch use cases were `torch.compile` templates such as grouped GEMM and flex attention. Native/eager overrides were added later through the generic `torch._native` DSL framework.
+CuteDSL's upstream path did not start with native/eager overrides. The compiler template path came first because the earliest PyTorch use cases were `torch.compile` templates such as grouped GEMM and flex attention. Native/eager overrides were added later through the generic `torch._native` DSL framework. The lesson for FlyDSL is not that every DSL must follow the same order; it is that native/eager and Inductor/compiler integrations can land independently when their support matrices and tests are clear.
 
 | Stage | Surface | What landed | Lesson for FlyDSL |
 |---:|---|---|---|
@@ -86,7 +119,7 @@ CuteDSL's upstream path did not start with native/eager overrides. The compiler 
 | 3 | Native/eager ops | Per-op `cond` / `impl` adapters such as TopK and ScatterAdd | Eager support is acceptable only with strict predicates and aten fallback. |
 | 4 | Compile-cache hardening | QuACK eager `.o` cache and Inductor `cutedsl_cache.py` | JIT compile cost must be amortized and observable before expanding coverage. |
 
-This history does not imply FlyDSL must start with Inductor. It means the first integration path should match the first stable FlyDSL surface. Today FlyDSL has a usable eager JIT/runtime API and RMSNorm tests, but no Inductor-shaped codegen/scheduling interface.
+This history does not imply FlyDSL must start with Inductor. It means the first integration path should match the first stable FlyDSL surface. Native RMSNorm and Inductor hgemm should be treated as separate experimental tracks: one validates dispatcher override semantics, and the other validates compiler template/autotune mechanics.
 
 ## Code Map
 
@@ -582,7 +615,7 @@ Compiler flow interpretation:
 | Load | `async_compile.cutedsl()` / PyCodeCache | Compile/load generated Python through Inductor's existing async path. |
 | Artifact | CuteDSL runtime cache | Keep backend-specific compile artifacts outside PyTorch ownership as much as possible. |
 
-The compiler path has more moving parts than native dispatch because it participates in code generation, caching, and algorithm selection. This is why the FlyDSL RFC keeps Inductor support as a later stage.
+The compiler path has more moving parts than native dispatch because it participates in code generation, caching, and algorithm selection. This is why the FlyDSL RFC treats Inductor support as an independent compiler track with its own gates, tests, and rollout criteria.
 
 ### Component Responsibilities
 
@@ -669,7 +702,7 @@ Validation flow interpretation:
 | Version whitelist | Yes | Start strict, relax after API stability. |
 | Eager JIT cache | Yes | FlyDSL should provide a package-owned memory/disk cache wrapper before enabling a native override. |
 | Optional CI install | Yes | Add `install_flydsl()` only on selected ROCm jobs. |
-| Inductor template model | Later | Mirror CuteDSL once native path is stable. |
+| Inductor template model | Yes, independently | Mirror CuteDSL when a specific FlyDSL template has a narrow support matrix, runtime gate, generated-code tests, and autotune coverage. |
 | CuteDSL cache implementation | No | FlyDSL should use its own cache and bridge to Inductor later if needed. |
 | CUDA backend gates | No | Replace with HIP/ROCm and `gfx` gates. |
 | Vendored QuACK model | Avoid initially | Prefer FlyDSL-owned package APIs over vendoring kernels. |
@@ -683,8 +716,8 @@ Validation flow interpretation:
 | QuACK-style vendoring as the first step | Vendoring kernels increases PyTorch ownership and review burden; start with stable FlyDSL package APIs. |
 | Broad Inductor backend exposure before templates exist | `FLYDSL` should not appear as a meaningful selectable backend until at least one tested template lands. |
 | Copying op predicates mechanically | Eligibility should be rewritten around FlyDSL's supported dtypes, shapes, layouts, streams, and ROCm targets. |
-| Treating native and Inductor paths as one PR | Native overrides validate runtime safety; Inductor validates compiler integration and should land later. |
-| Assuming Inductor-first is mandatory | CuteDSL started with Inductor because its first use cases were compiler templates; FlyDSL should start where its current API is strongest. |
+| Treating native and Inductor paths as one PR | Native overrides validate runtime safety; Inductor validates compiler integration. They should stay independently reviewable even when developed in parallel. |
+| Assuming Inductor-first is mandatory | CuteDSL started with Inductor because its first use cases were compiler templates; FlyDSL should choose the first path based on the strongest tested FlyDSL surface. |
 
 ## Recommended FlyDSL Staging
 
@@ -694,7 +727,7 @@ Validation flow interpretation:
 | 2 | Add FlyDSL smoke test and ROCm CI install | Proves package/runtime viability. |
 | 3 | Add RMSNorm as the first native ROCm op adapter | Proves fallback-safe acceleration with a narrow, testable surface. |
 | 4 | Add OpInfo and user-control coverage | Aligns with existing native DSL test discipline. |
-| 5 | Prototype Inductor template | Only after package, cache, and kernel APIs are stable. |
+| 5 | Prototype Inductor template | As an independent compiler track once the selected kernel family has a narrow support matrix, runtime availability gate, and focused tests. |
 
 ## Bottom Line
 
@@ -704,7 +737,7 @@ CuteDSL provides a proven PyTorch integration shape, but FlyDSL should not copy 
 - user controls through `torch.backends.python_native`;
 - strict native predicates and aten fallback;
 - optional runtime installation in CI;
-- Inductor templates as a later compiler integration.
+- Inductor templates as an independent compiler integration surface.
 
 This is the structure the FlyDSL RFC should reference, while keeping the RFC itself focused on the proposed FlyDSL design.
 
