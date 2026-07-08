@@ -60,7 +60,6 @@ without FlyDSL.
 | Replace CK, CKTile, Triton, Aten, or vendor libraries | FlyDSL is an optional accelerator/backend candidate. |
 | Land native/eager and Inductor support in one PR | They are different review surfaces with different failure modes. |
 | Claim full GEMM backend coverage from the first hgemm prototype | The current Inductor prototype is intentionally narrow. |
-| Claim MoE support from grouped GEMM primitives alone | MoE needs routing metadata, wrapper ABI, validation, and workload benchmarks. |
 
 ## Experimental Prototype Status
 
@@ -360,6 +359,27 @@ Implementation guidance:
   compile helpers.
 - Add each dtype/layout family with focused correctness, generated-code, and
   autotune tests before broadening the lowering gate.
+
+## Beyond GEMM: FlexGEMM and FlexAttention-style Work
+
+After unfused GEMM and grouped/expert GEMM are stable, FlyDSL can evaluate more
+complex Inductor template families. These should be treated as follow-on design
+work, not as requirements for the first hgemm prototype.
+
+| Area | PyTorch/CuteDSL precedent | FlyDSL future work |
+|---|---|---|
+| FlexGEMM-style epilogues | PyTorch captures a GEMM plus an epilogue graph, materializes the epilogue, and routes the generated wrapper to a CuteDSL/QuACK GEMM runtime. | Add FlyDSL GEMM epilogue wrappers for bias, activation, residual, scale, aux outputs, and captured tensors after the base GEMM families are stable. |
+| FlexAttention-style kernels | PyTorch handles `score_mod` / `mask_mod` graph capture, block-sparse metadata, and generated wrappers that call flash-attn CuteDSL kernels. | Add FlyDSL attention-family templates only after FlyDSL has a stable attention kernel API and metadata contract for masks, score modifiers, block metadata, and fallback. |
+
+Recommended ordering:
+
+```mermaid
+flowchart LR
+    A["bf16 hgemm"] --> B["broader GEMM dtype/layout"]
+    B --> C["grouped / expert GEMM"]
+    C --> D["GEMM epilogue / FlexGEMM-style"]
+    D --> E["attention-family / FlexAttention-style"]
+```
 
 ## Rollout Plan
 
