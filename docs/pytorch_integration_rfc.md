@@ -175,27 +175,22 @@ integration surface.
 
 ## Reference: CuteDSL in PyTorch
 
-CuteDSL is the closest PyTorch precedent, but it is not a single mechanism. It
-currently appears across multiple surfaces:
+CuteDSL is the closest PyTorch DSL precedent, but it is not a single mechanism.
+It currently appears across native/eager and Inductor template surfaces:
 
 | Surface | CuteDSL examples | Lesson for FlyDSL |
 |---|---|---|
 | Native/eager | TopK, ScatterAdd, fused RMSNorm through QuACK | Optional runtime, cheap predicates, lazy imports, aten fallback. |
 | Inductor templates | grouped GEMM, FlexAttention forward/backward, FlexGEMM epilogue | Template choices, generated wrappers, async compile/load, scheduling. |
-| Universal GEMM | NVGEMM through `cutlass_api` for GEMM/scaled GEMM/grouped GEMM candidates | Registry-style kernel discovery and heuristic ranking can be a later maturity goal. |
 | Runtime/cache policy | optional package installs, runtime gates, compile/cache helpers | Missing runtime must not change PyTorch default behavior. |
 
 The reusable pattern is the optional DSL architecture, not CUDA-specific details.
 FlyDSL should replace CUDA/CUTLASS assumptions with ROCm/HIP and `gfx`-specific
 gates.
 
-CuteDSL also illustrates that kernel implementations can come from more than one
-source. Some concrete kernels are carried as PyTorch-vendored source, such as
-`torch/_vendor/quack` or `torch/_inductor/kernel/vendored_templates/cutedsl`,
-while other GEMM candidates are discovered through `cutlass_api`. For the FlyDSL
-PyTorch integration proposed here, the PyTorch-facing kernel implementation
-should follow the vendored-source model, while FlyDSL core owns the compiler and
-runtime behavior.
+For the FlyDSL PyTorch integration proposed here, the first Inductor hgemm
+prototype should follow this vendored-source template model. FlyDSL core owns
+compiler and runtime behavior.
 
 ## Native / Eager Design
 
