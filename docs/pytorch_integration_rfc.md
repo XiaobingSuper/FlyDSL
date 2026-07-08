@@ -14,8 +14,8 @@ PyTorch through two independent planes:
   async compile/load, and autotune.
 
 The first native/eager prototype targets RMSNorm. The first Inductor prototype
-targets bf16 hgemm for `aten.mm(A, B.T)`. Future work should expand from this
-foundation toward broader GEMM dtype/layout coverage, grouped/expert GEMM,
+targets fp16/bf16 hgemm for `aten.mm(A, B.T)`. Future work should expand from
+this foundation toward broader GEMM dtype/layout coverage, grouped/expert GEMM,
 fusion/epilogues, cache/AOT, and workload integrations.
 
 The core design principle is additive integration. FlyDSL should be a selectable
@@ -47,7 +47,7 @@ without FlyDSL.
 5. Preserve aten behavior for unsupported platforms, package versions, dtypes,
    shapes, layouts, and architectures.
 6. Use RMSNorm as the first native/eager prototype.
-7. Use bf16 hgemm for `aten.mm(A, B.T)` as the first Inductor template prototype.
+7. Use fp16/bf16 hgemm for `aten.mm(A, B.T)` as the first Inductor template prototype.
 8. Provide a staged rollout plan that can be reviewed as small, independently
    owned PRs.
 
@@ -70,7 +70,7 @@ they are evidence that the two-plane design is viable.
 | Prototype | Scope | What it validates |
 |---|---|---|
 | Native/eager experiment | FlyDSL RMSNorm through `torch._native` and `python_native` controls | Optional runtime gate, native dispatcher override, fallback, and compile-cache shape. |
-| Inductor/compiler experiment | FlyDSL bf16 hgemm template for `aten.mm(A, B.T)` on ROCm | Template rendering, async compile/load, runtime gate, autotune benchmarking, and generated-code invocation. |
+| Inductor/compiler experiment | FlyDSL fp16/bf16 hgemm template for `aten.mm(A, B.T)` on ROCm | Template rendering, async compile/load, runtime gate, autotune benchmarking, and generated-code invocation. |
 
 The Inductor experiment intentionally does not depend on
 `torch._native.dsl_registry` or `torch.backends.python_native.flydsl`. It uses
@@ -282,9 +282,9 @@ A backend candidate needs:
 | Scheduling backend | Emits compile/load/runtime code for the selected template. |
 | Async compile entry | Loads generated source and returns a runtime wrapper. |
 
-### Current FlyDSL bf16 hgemm Prototype
+### Current FlyDSL fp16/bf16 hgemm Prototype
 
-The current Inductor prototype targets bf16 hgemm for `aten.mm(A, B.T)`:
+The current Inductor prototype targets fp16/bf16 hgemm for `aten.mm(A, B.T)`:
 
 ```mermaid
 flowchart LR
@@ -300,16 +300,16 @@ Current support matrix:
 | Topic | Current decision |
 |---|---|
 | Op | `aten.mm(A, B.T)` style matmul. Inductor sees RHS as a `[K, N]` transpose view and the wrapper adapts it to FlyDSL's `[N, K]` expectation. |
-| Dtype | Current report/prototype focus is bf16 hgemm. |
+| Dtype | Current prototype supports fp16 and bf16 hgemm paths. |
 | Shape | Static 2D inputs. `N` must be divisible by `TILE_N`, `K` by `TILE_K`, and `K // SPLIT_K // TILE_K >= STAGES`. |
 | Layout | `mat1` and output are row-major along K/N; RHS must match the transpose-view pattern. |
 | Autotune | Multiple FlyDSL hgemm configs are emitted and benchmarked. |
 | Fallback | If any gate fails, no FlyDSL choice is appended. Existing Inductor choices continue unchanged. |
 
-This prototype should be evaluated as **bf16 hgemm only**. Even if the wrapper
-shape can be extended to fp16 or lower-precision kernels, those should not be
-claimed as supported until they have dedicated kernel support, config coverage,
-correctness tests, and autotune evidence.
+This prototype should be evaluated as **fp16/bf16 hgemm only**. Lower-precision
+or scaled GEMM families, such as fp8/scaled GEMM, should not be claimed as
+supported until they have dedicated kernel support, config coverage, correctness
+tests, and autotune evidence.
 
 ### Kernel and Wrapper Boundary
 
@@ -327,17 +327,16 @@ and FlyDSL should keep a clear boundary:
 ## GEMM Family Expansion Design
 
 Future GEMM expansion guidance is not part of the first hgemm acceptance
-criteria. It describes how the backend should grow after the bf16 hgemm
+criteria. It describes how the backend should grow after the fp16/bf16 hgemm
 prototype is stable. Expansion should be organized by kernel family and support
 matrix instead of accumulating unrelated flags in one template.
 
 ```mermaid
 flowchart LR
-    A["bf16 hgemm"] --> B["fp16 hgemm"]
-    B --> C["fp8 / scaled GEMM"]
-    C --> D["layout variants"]
-    D --> E["grouped / expert GEMM"]
-    E --> F["MoE workload integration"]
+    A["fp16/bf16 hgemm"] --> B["fp8 / scaled GEMM"]
+    B --> C["layout variants"]
+    C --> D["grouped / expert GEMM"]
+    D --> E["MoE workload integration"]
 ```
 
 | Area | Direction | Boundary |
@@ -353,8 +352,8 @@ flowchart LR
 Implementation guidance:
 
 - Keep PyTorch tensor adaptation in generated wrappers.
-- Avoid one monolithic `compile_gemm_kernel(...)` with unrelated flags for bf16,
-  fp8, scaled, and grouped kernels.
+- Avoid one monolithic `compile_gemm_kernel(...)` with unrelated flags for
+  fp16/bf16, fp8, scaled, and grouped kernels.
 - Prefer a small family dispatcher in the wrapper that calls separate stable
   compile helpers.
 - Add each dtype/layout family with focused correctness, generated-code, and
@@ -375,7 +374,7 @@ Recommended ordering:
 
 ```mermaid
 flowchart LR
-    A["bf16 hgemm"] --> B["broader GEMM dtype/layout"]
+    A["fp16/bf16 hgemm"] --> B["broader GEMM dtype/layout"]
     B --> C["grouped / expert GEMM"]
     C --> D["GEMM epilogue / FlexGEMM-style"]
     D --> E["attention-family / FlexAttention-style"]
@@ -392,7 +391,7 @@ while sharing runtime policy and CI setup.
 | 2 | Add ROCm CI install helper and smoke test. | Reuse CI install path for compiler tests. | Package/runtime viability. |
 | 3 | Add RMSNorm native adapter and kernel wrapper. | None. | Correctness, fallback, cache behavior. |
 | 4 | Add OpInfo, user-control tests, and cold/warm cache reporting. | None. | Native test coverage and observable runtime behavior. |
-| 5 | Keep native track stable and independent. | Land bf16 hgemm template prototype. | Template rendering, async compile/load, autotune, narrow support matrix. |
+| 5 | Keep native track stable and independent. | Land fp16/bf16 hgemm template prototype. | Template rendering, async compile/load, autotune, narrow support matrix. |
 | 6 | Evaluate next native op only with benchmark evidence. | Expand GEMM dtype/layout support: fp16, fp8/scaled GEMM, more shapes/gfx targets. | Separate support matrices and config pruning. |
 | 7 | Continue fallback and OpInfo coverage for any new native op. | Add grouped/expert GEMM template and metadata ABI. | Group offsets, per-group shapes, workspace, benchmarks. |
 | 8 | Keep native wrappers focused on eager semantics. | Add fusion/epilogue, persistent cache, and AOT exploration. | Predictable compile/runtime behavior. |
