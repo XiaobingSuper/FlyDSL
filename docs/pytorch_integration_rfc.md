@@ -10,12 +10,11 @@ This RFC proposes integrating FlyDSL, a ROCm-oriented Python DSL with MLIR
 lowering, HIP tensor ABI support, stream support, and JIT/runtime caching, as an
 optional PyTorch backend for AMD GPUs. The value to PyTorch is an additional DSL
 implementation path that can compete with existing Aten and compiler backends on
-targeted ROCm workloads where FlyDSL kernels show clear accuracy and performance
-benefits.
+targeted ROCm workloads where FlyDSL kernels show clear performance benefits.
 
-FlyDSL should be positioned as the AMD GPU counterpart to the existing CuteDSL
-direction for NVIDIA GPUs: it should reuse PyTorch's optional DSL scaffolding,
-but it should not try to match CuteDSL's exact operator scope. FlyDSL coverage
+FlyDSL would be positioned as the AMD GPU counterpart to the existing CuteDSL
+direction for NVIDIA GPUs: it would reuse PyTorch's optional DSL scaffolding,
+but it wouldn't try to match CuteDSL's exact operator scope. FlyDSL coverage
 should grow only where a FlyDSL implementation has a measurable advantage and a
 maintainable support matrix.
 
@@ -76,11 +75,9 @@ autotune candidates should all fall back without changing user-visible behavior.
 | Non-goal | Reason |
 |---|---|
 | Make `flydsl` a required PyTorch dependency | PyTorch default installs must remain unchanged. |
-| Vendor FlyDSL's MLIR compiler into PyTorch | The compiler/runtime should remain FlyDSL-owned. |
 | Match CuteDSL's exact operator scope | FlyDSL should add kernels only where AMD GPU performance, supportability, and tests justify the scope. |
 | Promise full dtype, layout, or dynamic-shape coverage for an operator family | Each supported family should be enabled only for tested cases with performance benefit. |
 | Replace CK, CKTile, Triton, Aten, or vendor libraries by policy | FlyDSL should win through evidence and backend selection, not through a blanket replacement rule. |
-| Land native/eager and Inductor support in one PR | They are different review surfaces with different failure modes. |
 
 ## Packaging Strategy
 
@@ -396,14 +393,3 @@ Default behavior should not change.
 | ROCm PyTorch with supported FlyDSL | Eligible calls may use FlyDSL; unsupported calls use aten or existing Inductor choices. |
 | User disables FlyDSL native overrides | Eager/native FlyDSL overrides are disabled; Inductor controls remain separate. |
 | Inductor backend config excludes FlyDSL | Inductor does not append FlyDSL choices, even if `python_native.flydsl` is enabled. |
-
-## Open Decisions
-
-Before implementation starts, reviewers should agree on three details:
-
-1. The initial packaging contract: external `flydsl` install plus PyTorch
-   optional-runtime detection.
-2. The initial vendored kernel locations for native/eager and Inductor sources.
-3. The GEMM family boundary: one initial bf16 GEMM family with multiple configs,
-   and separate families for fp16, fp8/scaled, grouped, dynamic-shape, or
-   epilogue variants when their ABI or correctness contract differs.
