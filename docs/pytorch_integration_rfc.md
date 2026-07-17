@@ -117,6 +117,19 @@ compile cost, persistent-cache load cost, warm runtime latency, autotune time
 when relevant, selected config, and backend winner versus Triton or other
 available choices.
 
+For the native/eager RMSNorm target, the relevant baseline is Aten. Local
+wall-to-sync warm-runtime measurements over 60 RMSNorm cases show FlyDSL faster
+than Aten across fp16, bf16, and fp32 inputs. The geometric-mean speedup is 1.50x
+overall, with 1.58x for fp16, 1.58x for bf16, and 1.35x for fp32.
+
+```mermaid
+xychart-beta
+    title "RMSNorm warm-runtime speedup over Aten"
+    x-axis ["fp16", "bf16", "fp32", "overall"]
+    y-axis "Geomean speedup" 0 --> 2.0
+    bar [1.58, 1.58, 1.35, 1.50]
+```
+
 ## Proposed Integration
 
 FlyDSL should reuse PyTorch's existing optional DSL architecture and add only the
