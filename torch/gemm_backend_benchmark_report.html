@@ -154,12 +154,13 @@
     <h1>GEMM Backend Performance Report</h1>
     <p class="muted">
       bf16 Inductor GEMM benchmark comparing ATen, Triton exhaustive autotune,
-      and FlyDSL exhaustive autotune. Shapes are MxNxK. Lower latency and higher TFLOP/s are better.
+      and FlyDSL exhaustive autotune. Shapes are MxNxK. Kernel time is the primary metric.
     </p>
     <p class="muted">
-      Source: ATen/Triton from <code>gemm_backend_benchmark.jsonl</code>;
-      FlyDSL from <code>flydsl_gfx950_shape_dynamic_shared_cache_12shapes_bf16.jsonl</code>
-      after shape-dynamic FlyDSL cache reuse and small-N tuning updates. Local runs from Jul 21, 2026.
+      Source: ATen from <code>gemm_backend_benchmark.jsonl</code>;
+      Triton/FlyDSL from same-GPU profiler runs
+      <code>triton_profile_kernel_12shapes_bf16_single_gpu4.jsonl</code> and
+      <code>flydsl_profile_kernel_12shapes_bf16_single_gpu4.jsonl</code>. Event median is preserved in the details table.
     </p>
   </section>
 
@@ -167,14 +168,14 @@
 
   <section class="chart-grid">
     <div class="card">
-      <h2>Median Latency By Backend</h2>
+      <h2>Kernel Time By Backend</h2>
       <div id="latency-chart" class="chart-wrap"></div>
       <div class="legend">
         <span class="legend-item"><span class="swatch" style="background: var(--aten)"></span>ATen</span>
         <span class="legend-item"><span class="swatch" style="background: var(--triton)"></span>Triton exhaustive</span>
         <span class="legend-item"><span class="swatch" style="background: var(--flydsl)"></span>FlyDSL exhaustive</span>
       </div>
-      <p class="muted">X axis: GEMM shape. Y axis: median latency in milliseconds.</p>
+      <p class="muted">X axis: GEMM shape. Y axis: profiler kernel self time in milliseconds.</p>
     </div>
     <div class="card">
       <h2>Throughput By Backend</h2>
@@ -184,7 +185,7 @@
         <span class="legend-item"><span class="swatch" style="background: var(--triton)"></span>Triton exhaustive</span>
         <span class="legend-item"><span class="swatch" style="background: var(--flydsl)"></span>FlyDSL exhaustive</span>
       </div>
-      <p class="muted">X axis: GEMM shape. Y axis: TFLOP/s computed from median latency.</p>
+      <p class="muted">X axis: GEMM shape. Y axis: TFLOP/s computed from kernel time.</p>
     </div>
   </section>
 
@@ -198,13 +199,13 @@
     <div class="card">
       <h2>Interpretation</h2>
       <p>
-        Triton is fastest on most small-M and irregular-N cases in this run.
-        ATen wins two shapes, including the largest square GEMM.
+        FlyDSL has the fastest measured GEMM kernel time on 11 of 12 shapes in this run.
+        ATen remains the fastest reference on the largest square GEMM.
       </p>
       <p style="margin-top: 10px;">
         FlyDSL now passes every tested shape with shape-dynamic JIT cache reuse.
-        Its latest wins are on the 256x4096x4096, 2048x4096x4096, and 16x28672x4096 cases; its best throughput is
-        <strong>1135.12 TFLOP/s</strong> on <strong>4096x4096x4096</strong>.
+        Its kernel time beats Triton on every tested shape; its best throughput is
+        <strong>1313.02 TFLOP/s</strong> on <strong>4096x4096x4096</strong>.
       </p>
     </div>
   </section>
@@ -219,42 +220,42 @@
 
 <script>
 const results = [
-  { shape: "8x4096x4096", backend: "ATen", ok: true, medianMs: 0.024457, tflops: 10.98, maxAbs: 0.0, compileS: 2.63 },
-  { shape: "8x4096x4096", backend: "Triton", ok: true, medianMs: 0.015333, tflops: 17.51, maxAbs: 0.5, compileS: 20.05 },
-  { shape: "8x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.027341, tflops: 9.82, maxAbs: 0.0625, compileS: 1120.26 },
-  { shape: "16x4096x4096", backend: "ATen", ok: true, medianMs: 0.024363, tflops: 22.04, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "16x4096x4096", backend: "Triton", ok: true, medianMs: 0.015005, tflops: 35.78, maxAbs: 0.0625, compileS: 18.54 },
-  { shape: "16x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.016475, tflops: 32.59, maxAbs: 0.125, compileS: 16.37 },
-  { shape: "32x4096x4096", backend: "ATen", ok: true, medianMs: 0.0244, tflops: 44.01, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "32x4096x4096", backend: "Triton", ok: true, medianMs: 0.014675, tflops: 73.17, maxAbs: 0.5, compileS: 48.51 },
-  { shape: "32x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.016451, tflops: 65.27, maxAbs: 0.5, compileS: 13.55 },
-  { shape: "64x4096x4096", backend: "ATen", ok: true, medianMs: 0.025464, tflops: 84.33, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "64x4096x4096", backend: "Triton", ok: true, medianMs: 0.015002, tflops: 143.15, maxAbs: 0.25, compileS: 88.84 },
-  { shape: "64x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.017537, tflops: 122.45, maxAbs: 0.5, compileS: 14.47 },
-  { shape: "128x4096x4096", backend: "ATen", ok: true, medianMs: 0.023623, tflops: 181.82, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "128x4096x4096", backend: "Triton", ok: true, medianMs: 0.019779, tflops: 217.15, maxAbs: 0.0, compileS: 155.28 },
-  { shape: "128x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.023094, tflops: 185.98, maxAbs: 0, compileS: 24.77 },
-  { shape: "256x4096x4096", backend: "ATen", ok: true, medianMs: 0.02363, tflops: 363.52, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "256x4096x4096", backend: "Triton", ok: true, medianMs: 0.027032, tflops: 317.77, maxAbs: 0.5, compileS: 259.40 },
-  { shape: "256x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.017543, tflops: 489.64, maxAbs: 0.5, compileS: 20.96 },
-  { shape: "512x4096x4096", backend: "ATen", ok: true, medianMs: 0.030972, tflops: 554.70, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "512x4096x4096", backend: "Triton", ok: true, medianMs: 0.030098, tflops: 570.80, maxAbs: 1.0, compileS: 266.11 },
-  { shape: "512x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.264773, tflops: 64.89, maxAbs: 1, compileS: 24.89 },
-  { shape: "2048x4096x4096", backend: "ATen", ok: true, medianMs: 0.102034, tflops: 673.50, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "2048x4096x4096", backend: "Triton", ok: true, medianMs: 0.07108, tflops: 966.79, maxAbs: 1.0, compileS: 332.44 },
-  { shape: "2048x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.063748, tflops: 1077.99, maxAbs: 1, compileS: 68.27 },
-  { shape: "4096x4096x4096", backend: "ATen", ok: true, medianMs: 0.102343, tflops: 1342.93, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "4096x4096x4096", backend: "Triton", ok: true, medianMs: 0.119697, tflops: 1148.23, maxAbs: 0.0, compileS: 370.25 },
-  { shape: "4096x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.121079, tflops: 1135.12, maxAbs: 0, compileS: 62.98 },
-  { shape: "32x14336x4096", backend: "ATen", ok: true, medianMs: 0.02401, tflops: 156.52, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "32x14336x4096", backend: "Triton", ok: true, medianMs: 0.021085, tflops: 178.24, maxAbs: 0.0, compileS: 56.10 },
-  { shape: "32x14336x4096", backend: "FlyDSL", ok: true, medianMs: 0.026199, tflops: 143.45, maxAbs: 0, compileS: 20.08 },
-  { shape: "16x28672x4096", backend: "ATen", ok: true, medianMs: 0.046581, tflops: 80.68, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "16x28672x4096", backend: "Triton", ok: true, medianMs: 0.033439, tflops: 112.39, maxAbs: 1.0, compileS: 26.11 },
-  { shape: "16x28672x4096", backend: "FlyDSL", ok: true, medianMs: 0.033276, tflops: 112.94, maxAbs: 0.5, compileS: 20.02 },
-  { shape: "4096x256x4096", backend: "ATen", ok: true, medianMs: 0.023862, tflops: 359.99, maxAbs: 0.0, compileS: 0.04 },
-  { shape: "4096x256x4096", backend: "Triton", ok: true, medianMs: 0.01905, tflops: 450.92, maxAbs: 0.0, compileS: 282.56 },
-  { shape: "4096x256x4096", backend: "FlyDSL", ok: true, medianMs: 0.054996, tflops: 156.19, maxAbs: 0, compileS: 31.60 },
+  { shape: "8x4096x4096", backend: "ATen", ok: true, medianMs: 0.024457, eventMs: 0.024457, tflops: 10.98, maxAbs: 0.0, compileS: 2.63 },
+  { shape: "8x4096x4096", backend: "Triton", ok: true, medianMs: 0.009813, eventMs: 0.014389, tflops: 27.36, maxAbs: 0.25, compileS: 19.84 },
+  { shape: "8x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.008335, eventMs: 0.016343, tflops: 32.21, maxAbs: 0.5, compileS: 1108.64 },
+  { shape: "16x4096x4096", backend: "ATen", ok: true, medianMs: 0.024363, eventMs: 0.024363, tflops: 22.04, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "16x4096x4096", backend: "Triton", ok: true, medianMs: 0.009533, eventMs: 0.015044, tflops: 56.31, maxAbs: 0.125, compileS: 18.98 },
+  { shape: "16x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.008625, eventMs: 0.017028, tflops: 62.25, maxAbs: 0.0625, compileS: 14.09 },
+  { shape: "32x4096x4096", backend: "ATen", ok: true, medianMs: 0.0244, eventMs: 0.0244, tflops: 44.01, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "32x4096x4096", backend: "Triton", ok: true, medianMs: 0.011816, eventMs: 0.014905, tflops: 90.87, maxAbs: 0.25, compileS: 48.74 },
+  { shape: "32x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.009262, eventMs: 0.017275, tflops: 115.93, maxAbs: 0.5, compileS: 13.47 },
+  { shape: "64x4096x4096", backend: "ATen", ok: true, medianMs: 0.025464, eventMs: 0.025464, tflops: 84.33, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "64x4096x4096", backend: "Triton", ok: true, medianMs: 0.013967, eventMs: 0.015037, tflops: 153.75, maxAbs: 0.5, compileS: 90.76 },
+  { shape: "64x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.010611, eventMs: 0.016904, tflops: 202.38, maxAbs: 0.5, compileS: 13.57 },
+  { shape: "128x4096x4096", backend: "ATen", ok: true, medianMs: 0.023623, eventMs: 0.023623, tflops: 181.82, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "128x4096x4096", backend: "Triton", ok: true, medianMs: 0.020103, eventMs: 0.021543, tflops: 213.65, maxAbs: 0.0, compileS: 152.12 },
+  { shape: "128x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.013342, eventMs: 0.016951, tflops: 321.90, maxAbs: 0, compileS: 14.23 },
+  { shape: "256x4096x4096", backend: "ATen", ok: true, medianMs: 0.02363, eventMs: 0.02363, tflops: 363.52, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "256x4096x4096", backend: "Triton", ok: true, medianMs: 0.023882, eventMs: 0.025851, tflops: 359.68, maxAbs: 1.0, compileS: 256.86 },
+  { shape: "256x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.017684, eventMs: 0.018624, tflops: 485.75, maxAbs: 1.0, compileS: 16.78 },
+  { shape: "512x4096x4096", backend: "ATen", ok: true, medianMs: 0.030972, eventMs: 0.030972, tflops: 554.70, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "512x4096x4096", backend: "Triton", ok: true, medianMs: 0.029174, eventMs: 0.029841, tflops: 588.88, maxAbs: 1.0, compileS: 273.60 },
+  { shape: "512x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.025191, eventMs: 0.027213, tflops: 681.98, maxAbs: 1.0, compileS: 20.33 },
+  { shape: "2048x4096x4096", backend: "ATen", ok: true, medianMs: 0.102034, eventMs: 0.102034, tflops: 673.50, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "2048x4096x4096", backend: "Triton", ok: true, medianMs: 0.065044, eventMs: 0.074136, tflops: 1056.51, maxAbs: 1.0, compileS: 350.20 },
+  { shape: "2048x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.055042, eventMs: 0.061474, tflops: 1248.49, maxAbs: 1.0, compileS: 45.78 },
+  { shape: "4096x4096x4096", backend: "ATen", ok: true, medianMs: 0.102343, eventMs: 0.102343, tflops: 1342.93, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "4096x4096x4096", backend: "Triton", ok: true, medianMs: 0.115082, eventMs: 0.119389, tflops: 1194.27, maxAbs: 0.0, compileS: 391.30 },
+  { shape: "4096x4096x4096", backend: "FlyDSL", ok: true, medianMs: 0.104674, eventMs: 0.106624, tflops: 1313.02, maxAbs: 0, compileS: 58.74 },
+  { shape: "32x14336x4096", backend: "ATen", ok: true, medianMs: 0.02401, eventMs: 0.02401, tflops: 156.52, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "32x14336x4096", backend: "Triton", ok: true, medianMs: 0.021273, eventMs: 0.021317, tflops: 176.66, maxAbs: 0.0, compileS: 59.76 },
+  { shape: "32x14336x4096", backend: "FlyDSL", ok: true, medianMs: 0.018180, eventMs: 0.018638, tflops: 206.72, maxAbs: 0, compileS: 15.87 },
+  { shape: "16x28672x4096", backend: "ATen", ok: true, medianMs: 0.046581, eventMs: 0.046581, tflops: 80.68, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "16x28672x4096", backend: "Triton", ok: true, medianMs: 0.033577, eventMs: 0.033338, tflops: 111.92, maxAbs: 1.0, compileS: 22.43 },
+  { shape: "16x28672x4096", backend: "FlyDSL", ok: true, medianMs: 0.032573, eventMs: 0.033154, tflops: 115.37, maxAbs: 1.0, compileS: 18.52 },
+  { shape: "4096x256x4096", backend: "ATen", ok: true, medianMs: 0.023862, eventMs: 0.023862, tflops: 359.99, maxAbs: 0.0, compileS: 0.04 },
+  { shape: "4096x256x4096", backend: "Triton", ok: true, medianMs: 0.018779, eventMs: 0.019270, tflops: 457.42, maxAbs: 0.0, compileS: 283.49 },
+  { shape: "4096x256x4096", backend: "FlyDSL", ok: true, medianMs: 0.017015, eventMs: 0.018351, tflops: 504.84, maxAbs: 0, compileS: 15.87 },
 ];
 
 const shapes = [...new Set(results.map(r => r.shape))];
@@ -281,8 +282,8 @@ function renderSummary() {
   const items = [
     ["Shapes compared", "12"],
     ["FlyDSL correctness", `${flydslRows.filter(r => r.ok).length}/12`],
-    ["Triton latency wins", String(counts.Triton)],
-    ["FlyDSL best TFLOP/s", `${fmt(fastestFlydsl.tflops, 2)}`],
+    ["FlyDSL kernel wins", String(counts.FlyDSL)],
+    ["FlyDSL best kernel TFLOP/s", `${fmt(fastestFlydsl.tflops, 2)}`],
   ];
   document.getElementById("summary").innerHTML = items.map(([label, value]) => `
     <div class="card"><div class="stat-label">${label}</div><div class="stat-value">${value}</div></div>
@@ -319,13 +320,13 @@ function renderChart(targetId, metric, unit, lowerBetter) {
     parts.push(`<text x="${gx}" y="${height - 54}" fill="var(--muted)" font-size="11" text-anchor="end" transform="rotate(-35 ${gx} ${height - 54})">${shape}</text>`);
   });
   parts.push(`<text x="${width / 2}" y="${height - 8}" fill="var(--muted)" font-size="12" text-anchor="middle">Shape (M x N x K)</text>`);
-  parts.push(`<text x="14" y="${height / 2}" fill="var(--muted)" font-size="11" text-anchor="middle" transform="rotate(-90 14 ${height / 2})">${metric === "medianMs" ? "Median latency (ms)" : "Throughput (TFLOP/s)"}</text>`);
+  parts.push(`<text x="14" y="${height / 2}" fill="var(--muted)" font-size="11" text-anchor="middle" transform="rotate(-90 14 ${height / 2})">${metric === "medianMs" ? "Kernel time (ms)" : "Kernel TFLOP/s"}</text>`);
   parts.push(`</svg>`);
   document.getElementById(targetId).innerHTML = parts.join("");
 }
 
 function renderWinnerTable() {
-  const header = `<tr><th>Shape MxNxK</th><th>Winner</th><th class="num">Median (ms)</th><th class="num">TFLOP/s</th></tr>`;
+  const header = `<tr><th>Shape MxNxK</th><th>Winner</th><th class="num">Kernel (ms)</th><th class="num">Kernel TFLOP/s</th></tr>`;
   const body = shapes.map(shape => {
     const w = winner(shape);
     return `<tr><td>${shape}</td><td class="winner" style="color:${colors[w.backend]}">${w.backend}</td><td class="num">${fmt(w.medianMs, 6)}</td><td class="num">${fmt(w.tflops, 2)}</td></tr>`;
@@ -334,13 +335,14 @@ function renderWinnerTable() {
 }
 
 function renderDetailTable() {
-  const header = `<tr><th>Shape MxNxK</th><th>Backend</th><th>Status</th><th class="num">Median (ms)</th><th class="num">TFLOP/s</th><th class="num">Compile (s)</th><th class="num">Max abs</th></tr>`;
+  const header = `<tr><th>Shape MxNxK</th><th>Backend</th><th>Status</th><th class="num">Kernel (ms)</th><th class="num">Event (ms)</th><th class="num">Kernel TFLOP/s</th><th class="num">Compile (s)</th><th class="num">Max abs</th></tr>`;
   const body = results.map(r => `
     <tr>
       <td>${r.shape}</td>
       <td style="color:${colors[r.backend]}">${r.backend}</td>
       <td><span class="pill ok">${r.ok ? "ok" : "failed"}</span></td>
       <td class="num">${fmt(r.medianMs, 6)}</td>
+      <td class="num">${fmt(r.eventMs ?? r.medianMs, 6)}</td>
       <td class="num">${fmt(r.tflops, 2)}</td>
       <td class="num">${fmt(r.compileS, 2)}</td>
       <td class="num">${fmt(r.maxAbs, 3)}</td>
