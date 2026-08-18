@@ -49,37 +49,16 @@ tensor/stream ABI, but keep separate routing, configuration, and caches.
 *Figure 1. Eager dispatch and TorchInductor autotuning independently use the optional
 FlyDSL compiler/runtime.*
 
-### Eager Execution
+In eager mode, PyTorch checks the device, dtype, shape, and layout before lazily
+compiling and launching a FlyDSL kernel. The override can be inspected or disabled
+through `torch.backends.python_native.flydsl`.
 
-The eager path extends PyTorch's `torch._native` DSL mechanism. A lightweight
-predicate first checks the device, dtype, shape, layout, and performance region. Only
-then does PyTorch lazily import, compile, cache, and launch the FlyDSL kernel on the
-current ROCm stream.
+With `torch.compile`, TorchInductor adds FlyDSL configurations only for eligible
+problems, benchmarks them with existing choices, and caches the winner.
 
-FlyDSL eager overrides can be inspected or disabled through
-`torch.backends.python_native.flydsl`. This control does not affect TorchInductor.
-
-### TorchInductor
-
-During lowering, TorchInductor appends FlyDSL choices only for supported problems. It
-generates and prunes template configurations, compiles valid choices, benchmarks them
-with existing backends, and caches the winner.
-
-This makes low-level kernel parameters—tile dimensions, pipeline stages, wave layout,
-output swizzles, and interleaving—part of PyTorch's normal shape-aware autotuning
-process instead of forcing one configuration across every workload.
-
-### Optional by Construction
-
-FlyDSL remains an optional dependency. `import torch` does not import FlyDSL or
-initialize the ROCm runtime, and the integration retains existing PyTorch choices for
-CPU/CUDA builds, ROCm installations without FlyDSL, non-`gfx950` devices, unsupported
-operator inputs, and TorchInductor candidates that lose autotuning.
-
-Eager and compiler controls also remain independent. Disabling
-`torch.backends.python_native.flydsl` restores eager ATen dispatch without changing
-TorchInductor. Removing `FLYDSL` from the GEMM backend list disables compiler
-templates without changing eager overrides.
+FlyDSL remains optional: unsupported systems and operator inputs retain existing
+PyTorch behavior. Eager controls and TorchInductor backend selection are independent,
+so disabling one path does not affect the other.
 
 ## Performance Results
 
