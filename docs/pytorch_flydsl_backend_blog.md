@@ -98,9 +98,9 @@ especially effective when `N` is one element larger than an aligned size, such a
 *Figure 2. Warm eager RMSNorm speedup over ATen after 10 warmup and 50 timed
 iterations. Shape labels are `M × N`; values above 1.0 favor FlyDSL.*
 
-Aligned dimensions improve by 1.16x–1.54x. For hidden dimensions one element larger
-than an aligned size—for example, `4097` instead of `4096`—the measured speedup
-reaches 3.66x.
+Aligned dimensions improve by **1.16x–1.54x**. For hidden dimensions one element
+larger than an aligned size—for example, `4097` instead of `4096`—the measured
+speedup reaches **3.66x**.
 
 ### TorchInductor: GEMM Autotuning
 
@@ -123,8 +123,8 @@ Eligibility currently requires:
 For each eligible shape, TorchInductor filters incompatible FlyDSL configurations,
 benchmarks the remaining choices alongside existing backends, and caches the winner.
 
-Across 15 BF16 NT GEMM shapes, FlyDSL achieves a 1.19x geomean over Triton, 1.15x
-over ATen, and 1.10x over the faster baseline at each shape.
+Across 15 BF16 NT GEMM shapes, FlyDSL achieves a **1.19x** geomean over Triton,
+**1.15x** over ATen, and **1.10x** over the faster baseline at each shape.
 
 ![TorchInductor BF16 dense GEMM speedup](_static/flydsl-pytorch-backend/flydsl-dense-gemm-performance.png)
 
@@ -145,9 +145,9 @@ scales, FP32 accumulation, and FP16/BF16 output.
 *Figure 4. Per-shape MXFP8 speedup over ATen. Both backends are measured
 back-to-back through `aten._scaled_mm_v2` with the same graph-replay harness.*
 
-Across 13 shapes, FlyDSL reaches a 1.42x geomean over ATen. A separately measured
-Composable Kernel reference, using a standalone C++ harness, shows a 1.15x geomean
-advantage for FlyDSL.
+Across 13 shapes, FlyDSL reaches a **1.42x** geomean over ATen. A separately measured
+Composable Kernel reference, using a standalone C++ harness, shows a **1.15x**
+geomean advantage for FlyDSL.
 
 ### Additional Operator Results
 
@@ -165,9 +165,9 @@ radix-select covers tuned shape bands from `K=64` through `K=1024`.
 
 *Figure 5. TopK geometric-mean speedup over ATen by kernel family.*
 
-The register family reaches 4.81x and 4.02x geometric-mean speedups in
-non-deterministic and deterministic modes. Radix-select ranges from 1.40x to 1.97x
-geometrically across its tuned `K` bands.
+The register family reaches **4.81x** and **4.02x** geometric-mean speedups in
+non-deterministic and deterministic modes. Radix-select reaches a **1.40x–1.97x**
+geometric-mean speedup across its tuned `K` bands.
 
 #### TorchInductor: Grouped GEMM
 
@@ -180,9 +180,9 @@ The persistent kernel is designed for MoE-style workloads with uneven or empty g
 
 *Figure 6. Geometric-mean grouped GEMM speedup within each reported suite.*
 
-On the standard 14-shape suite, FlyDSL reaches a 1.21x geomean over Triton and a
-2.12x geomean over ATen, and is the best measured backend in 11 of 14 cases. It is
-also the best backend in all five ragged-`M` cases.
+On the standard 14-shape suite, FlyDSL reaches a **1.21x** geomean over Triton and a
+**2.12x** geomean over ATen, and is the best measured backend in 11 of 14 cases. It
+is also the best backend in all five ragged-`M` cases.
 
 ## How to Try It
 
