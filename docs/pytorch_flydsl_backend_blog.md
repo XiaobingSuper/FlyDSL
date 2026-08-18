@@ -187,7 +187,7 @@ radix-select covers tuned shape bands from `K=64` through `K=1024`.
 
 ![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
 
-*Figure 5. TopK geometric-mean speedup over ATen; whiskers show the sampled range.*
+*Figure 5. TopK geometric-mean speedup over ATen by kernel family.*
 
 The register family reaches 4.81x and 4.02x geometric-mean speedups in
 non-deterministic and deterministic modes. Radix-select ranges from 1.40x to 1.97x
