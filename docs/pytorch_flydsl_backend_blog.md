@@ -89,10 +89,10 @@ end-to-end compilation and execution.
 ## Performance Results
 
 We first use RMSNorm and dense GEMM to explain the eager and TorchInductor paths in
-detail. The final subsection summarizes TopK, grouped GEMM, and scaled GEMM. Detailed
-examples use per-shape speedups; summary charts use geometric means where the source
-benchmarks are organized by kernel family or suite. Each figure states its aggregation,
-and values should be compared within that figure rather than across figures.
+detail. MXFP8/MXFP4 scaled GEMM follows dense GEMM as another dtype family in the same
+compiler backend. The final subsection summarizes TopK and grouped GEMM. GEMM results
+use per-shape speedups, while summary charts use geometric means by kernel family or
+suite.
 
 ### Eager: RMSNorm
 
@@ -128,7 +128,9 @@ Aligned dimensions improve by 1.16x–1.54x. For hidden dimensions one element l
 than an aligned size—for example, `4097` instead of `4096`—the measured speedup
 reaches 3.66x.
 
-### TorchInductor: Dense GEMM Autotuning
+### TorchInductor: GEMM Autotuning
+
+#### Dense FP16/BF16 GEMM
 
 The first detailed TorchInductor target is
 [dense GEMM](https://github.com/pytorch/pytorch/pull/190903): static 2D
@@ -170,6 +172,21 @@ shape. Ratios within ±1% count as ties.*
 Results are the median of four accuracy-checked graph-replay runs. FlyDSL and Triton
 use the `EXHAUSTIVE` search space; ATen uses its default configuration.
 
+#### MXFP8 and MXFP4 Scaled GEMM
+
+The [scaled GEMM integration](https://github.com/pytorch/pytorch/pull/193527) adds
+MXFP8 and MXFP4 BlockWise1x32 kernel families. MXFP8 uses E4M3 inputs, E8M0 block
+scales, FP32 accumulation, and FP16/BF16 output.
+
+![MXFP8 speedup over ATen](_static/flydsl-pytorch-backend/flydsl-mxfp8-performance.png)
+
+*Figure 4. Per-shape MXFP8 speedup over ATen. Both backends are measured
+back-to-back through `aten._scaled_mm_v2` with the same graph-replay harness.*
+
+Across 13 shapes, FlyDSL reaches a 1.42x geomean over ATen. A separately measured
+Composable Kernel reference, using a standalone C++ harness, shows a 1.15x geomean
+advantage for FlyDSL.
+
 ### Additional Operator Results
 
 #### Eager: TopK
@@ -184,7 +201,7 @@ radix-select covers tuned shape bands from `K=64` through `K=1024`.
 
 ![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
 
-*Figure 4. TopK geometric-mean speedup over ATen; whiskers show the sampled range.*
+*Figure 5. TopK geometric-mean speedup over ATen; whiskers show the sampled range.*
 
 The register family reaches 4.81x and 4.02x geometric-mean speedups in
 non-deterministic and deterministic modes. Radix-select ranges from 1.40x to 1.97x
@@ -199,26 +216,11 @@ The persistent kernel is designed for MoE-style workloads with uneven or empty g
 
 ![Grouped GEMM speedups](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
 
-*Figure 5. Geometric-mean grouped GEMM speedup within each reported suite.*
+*Figure 6. Geometric-mean grouped GEMM speedup within each reported suite.*
 
 On the standard 14-shape suite, FlyDSL reaches a 1.21x geomean over Triton and a
 2.12x geomean over ATen, and is the best measured backend in 11 of 14 cases. It is
 also the best backend in all five ragged-`M` cases.
-
-#### TorchInductor: MXFP8 and MXFP4 Scaled GEMM
-
-The [scaled GEMM integration](https://github.com/pytorch/pytorch/pull/193527) adds
-MXFP8 and MXFP4 BlockWise1x32 kernel families. MXFP8 uses E4M3 inputs, E8M0 block
-scales, FP32 accumulation, and FP16/BF16 output.
-
-![MXFP8 speedup over ATen](_static/flydsl-pytorch-backend/flydsl-mxfp8-performance.png)
-
-*Figure 6. Per-shape MXFP8 speedup over ATen. Both backends are measured
-back-to-back through `aten._scaled_mm_v2` with the same graph-replay harness.*
-
-Across 13 shapes, FlyDSL reaches a 1.42x geomean over ATen. A separately measured
-Composable Kernel reference, using a standalone C++ harness, shows a 1.15x geomean
-advantage for FlyDSL.
 
 ## How to Try It
 
