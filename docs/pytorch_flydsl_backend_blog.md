@@ -22,8 +22,9 @@ another backend when it benchmarks faster.
 The initial integration focuses on operators with measured gains on an AMD 256-CU
 MI355X (`gfx950`):
 
-- Eager RMSNorm improves representative aligned shapes by **1.16x–1.54x** over ATen
-  and off-by-one hidden dimensions by up to **3.66x**.
+- Eager RMSNorm improves representative aligned shapes by **1.16x–1.54x** over ATen.
+  For hidden dimensions one element larger than common aligned sizes—for example,
+  `N=4097` instead of `N=4096`—the speedup reaches **3.66x**.
 - Eager TopK reaches a **4.81x sampled geometric-mean speedup** for its small-`K`
   register kernel.
 - BF16 dense GEMM improves by **1.10x geometrically over the faster ATen/Triton
@@ -86,7 +87,29 @@ This makes low-level kernel parameters—tile dimensions, pipeline stages, wave 
 output swizzles, and interleaving—part of PyTorch's normal shape-aware autotuning
 process instead of forcing one configuration across every workload.
 
-## Eager Mode: RMSNorm
+### Optional by construction
+
+FlyDSL remains an optional dependency. `import torch` does not import FlyDSL or
+initialize the ROCm runtime, and the integration retains existing PyTorch choices for
+CPU/CUDA builds, ROCm installations without FlyDSL, non-`gfx950` devices, unsupported
+operator inputs, and TorchInductor candidates that lose autotuning.
+
+Eager and compiler controls also remain independent. Disabling
+`torch.backends.python_native.flydsl` restores eager ATen dispatch without changing
+TorchInductor. Removing `FLYDSL` from the GEMM backend list disables compiler
+templates without changing eager overrides.
+
+The integration is covered by tests for optional dependency detection, import
+laziness, eager controls, cache keys, operator accuracy, generated wrappers,
+configuration filtering, autotuning, deterministic TopK ties, and focused `gfx950`
+end-to-end compilation and execution.
+
+## Performance Results
+
+The following sections highlight RMSNorm for eager execution and dense GEMM for
+TorchInductor, then summarize the additional operators included in the first release.
+
+### Eager: RMSNorm
 
 RMSNorm is the first detailed example of the eager integration. The FlyDSL kernel
 implements the fused forward path and returns both the normalized output and the FP32
@@ -107,7 +130,8 @@ measured shape regions:
 The kernel combines reduction, normalization, scaling, and output generation while
 using architecture-specific reductions and vectorized loads. It also handles hidden
 dimensions that are not naturally aligned to ATen's preferred vector width. This is
-especially effective for the measured `N + 1` cases.
+especially effective when `N` is one element larger than an aligned size, such as
+`4097`, `8193`, or `16385`.
 
 ![Eager RMSNorm speedup over ATen](_static/flydsl-pytorch-backend/flydsl-rmsnorm-performance.png)
 
@@ -116,10 +140,10 @@ above 1.0 favor FlyDSL.*
 
 The measurements use 10 warmup and 50 GPU-event-timed iterations. Every row was
 confirmed to dispatch to FlyDSL, and both output and `rstd` were checked against ATen.
-Aligned dimensions improve by 1.16x–1.54x, while off-by-one dimensions improve by
-1.78x–3.66x. Repeating the smallest shape ten times produced a 1.16x–1.26x range.
+Aligned dimensions improve by 1.16x–1.54x, while the sampled `N+1` dimensions improve
+by 1.78x–3.66x. Repeating the smallest shape ten times produced a 1.16x–1.26x range.
 
-## More Eager Coverage: TopK
+### Eager: TopK
 
 TopK uses a register kernel for small fixed `K` values and radix-select kernels for
 larger continuous ranges. The initial override supports contiguous FP32 `gfx950`
@@ -150,7 +174,7 @@ non-deterministic and deterministic modes. The largest case reduces warm latency
 deterministic radix case measures 0.99x, which is visible in the figure's range
 whisker.
 
-## TorchInductor: Dense GEMM Autotuning
+### TorchInductor: Dense GEMM Autotuning
 
 The first detailed TorchInductor target is static 2D `aten.mm(A, B.T)` on `gfx950`:
 row-major `A[M, K]` is multiplied by `B[N, K].T` to produce `C[M, N]`.
@@ -197,9 +221,9 @@ The suite covers decode shapes from `M=8`, square GEMMs through
 accuracy-checked graph-replay runs. FlyDSL and Triton use the `EXHAUSTIVE` search
 space; ATen uses its default configuration.
 
-## More TorchInductor Coverage
+### Additional TorchInductor Operators
 
-### Grouped GEMM
+#### Grouped GEMM
 
 The `torch.nn.functional.grouped_mm` template supports ragged 2D `A` and grouped
 `B[G, K, N]`. Its current gate requires FP16/BF16, static `N` and `K` divisible by
@@ -214,7 +238,7 @@ On the standard 14-shape suite, FlyDSL reaches a 1.21x geomean over Triton and a
 2.12x geomean over ATen, and is the best measured backend in 11 of 14 cases. It is
 also the best backend in all five ragged-`M` cases.
 
-### MXFP8 and MXFP4 Scaled GEMM
+#### MXFP8 and MXFP4 Scaled GEMM
 
 The scaled GEMM integration adds dedicated BlockWise1x32 kernel families. MXFP8 uses
 row-major E4M3FN `A`, column-major E4M3FN `B`, E8M0FNU `NO_SWIZZLE` block scales
@@ -231,29 +255,6 @@ at `8192 × 8192 × 8192`. A separately measured Composable Kernel reference sho
 1.15x geomean advantage for FlyDSL; because that reference uses a standalone C++
 harness, it is not plotted with the same-harness ATen results. MXFP4 uses a separate
 kernel and configuration family through the same TorchInductor infrastructure.
-
-## Optional by Construction
-
-FlyDSL remains an optional dependency. `import torch` does not import FlyDSL or
-initialize the ROCm runtime, and the integration retains existing PyTorch choices in
-all of these cases:
-
-- CPU-only or CUDA-only PyTorch;
-- ROCm PyTorch without FlyDSL installed;
-- a missing or incompatible FlyDSL runtime;
-- a non-`gfx950` device;
-- unsupported dtype, shape, layout, alignment, or operator options;
-- a valid TorchInductor candidate that loses autotuning.
-
-Eager and compiler controls remain independent. Disabling
-`torch.backends.python_native.flydsl` restores eager ATen dispatch without changing
-TorchInductor. Removing `FLYDSL` from the GEMM backend list disables its compiler
-templates without changing eager overrides.
-
-The integration is covered by tests for optional dependency detection, import
-laziness, eager controls, cache keys, operator accuracy, generated wrappers,
-configuration filtering, autotuning, deterministic TopK ties, and focused `gfx950`
-end-to-end compilation and execution.
 
 ## How to Try It
 
