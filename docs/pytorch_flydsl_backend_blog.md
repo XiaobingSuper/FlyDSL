@@ -149,18 +149,9 @@ TopK uses a register kernel for small fixed `K` values and radix-select kernels 
 larger continuous ranges. The initial override supports contiguous FP32 `gfx950`
 inputs, reduction over the last dimension, `largest=True`, `sorted=True`, and at
 least 256 rows on MI355X. Functional and `out=` variants are both supported, and
-deterministic mode preserves ATen's tie ordering.
-
-| Kernel | `K` | Eligible last dimension `N` |
-|---|---|---|
-| Register | `{2, 4, 8, 16}` | Power of two, `1024 <= N <= 8192` |
-| Radix | `64 <= K <= 256` | `8192 <= N <= 32768` |
-| Radix | `257 <= K <= 383` | `16384 <= N <= 32768` |
-| Radix | `384 <= K <= 831` | `32768 <= N <= 131072` |
-| Radix | `832 <= K <= 1024` | `32768 <= N <= 262144` |
-
-For non-power-of-two `K`, the radix path pads to the next complete bitonic sorting
-network, preserving correctness while covering continuous `K` ranges.
+deterministic mode preserves ATen's tie ordering. The register path covers
+`K={2,4,8,16}` for tuned power-of-two dimensions; radix-select covers tuned shape
+bands from `K=64` through `K=1024`.
 
 ![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
 
@@ -332,15 +323,22 @@ autotuning time. The curated default search is the practical starting point.
 
 ## What's Next
 
-The initial integration establishes the framework needed to expand FlyDSL support in
-three directions:
+The initial integration establishes the framework for a concrete expansion roadmap:
 
-- **Broader qualification:** additional AMD GPU architectures, dynamic shapes, FP16
-  GEMM reporting, and wider layout/dtype coverage.
-- **More fusion and kernel families:** expert GEMM, epilogue fusion, and attention
-  templates, each with its own support matrix and benchmark evidence.
-- **Lower deployment cost:** heuristic-guided search, parallel precompilation,
-  persistent-cache measurement, and AOT-compatible packaging.
+- **More FP16/BF16 GEMM layouts and parallelism on `gfx950`.** Extend the initial NT
+  path with Split-K and NN/TN/TT layouts. The universal FlyDSL kernel is already
+  available in [ROCm/FlyDSL#992](https://github.com/ROCm/FlyDSL/pull/992), contributed
+  by [Yutao Xu](https://github.com/xytpai); its PyTorch integration builds on the
+  dense GEMM infrastructure introduced in
+  [pytorch/pytorch#190903](https://github.com/pytorch/pytorch/pull/190903).
+- **Broader scaled-matmul coverage.** Add `PTPC/block_scale` `scaled_mm` support in
+  TorchInductor, followed by MXFP8 `scaled_mm` backward. `PTPC/block_scale` support
+  is planned as a lower-priority follow-up.
+- **Training support for grouped and normalization workloads.** Add grouped MM
+  backward, scaled grouped MM forward/backward, and RMSNorm backward.
+- **Attention.** Add FlyDSL FlexAttention forward and backward templates.
+- **Lower deployment cost.** Continue work on heuristic-guided search, parallel
+  precompilation, persistent-cache measurement, and AOT-compatible packaging.
 
 ## Conclusion
 
