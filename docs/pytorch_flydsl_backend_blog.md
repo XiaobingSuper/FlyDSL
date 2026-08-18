@@ -38,11 +38,6 @@ LLVM AMDGPU, and emits an HSACO GPU code object. This combines Python-level
 productivity with the architecture control needed to tune data movement, wave layout,
 shared-memory staging, and matrix-core scheduling on AMD GPUs.
 
-The integration follows the same optional-backend principle as
-[TorchInductor's CuteDSL backend](https://pytorch.org/blog/gemms-torchinductor-cutedsl-backend/):
-add a lower-level implementation where it has a measurable benefit, while preserving
-the existing PyTorch path everywhere else.
-
 ## One Backend, Two Integration Paths
 
 Eager dispatch and TorchInductor autotuning solve different problems, so they remain
@@ -93,8 +88,11 @@ end-to-end compilation and execution.
 
 ## Performance Results
 
-The following sections highlight RMSNorm for eager execution and dense GEMM for
-TorchInductor, then summarize the additional operators included in the first release.
+We first use RMSNorm and dense GEMM to explain the eager and TorchInductor paths in
+detail. The final subsection summarizes TopK, grouped GEMM, and scaled GEMM. Detailed
+examples use per-shape speedups; summary charts use geometric means where the source
+benchmarks are organized by kernel family or suite. Each figure states its aggregation,
+and values should be compared within that figure rather than across figures.
 
 ### Eager: RMSNorm
 
@@ -129,24 +127,6 @@ iterations. Shape labels are `M × N`; values above 1.0 favor FlyDSL.*
 Aligned dimensions improve by 1.16x–1.54x. For hidden dimensions one element larger
 than an aligned size—for example, `4097` instead of `4096`—the measured speedup
 reaches 3.66x.
-
-### Eager: TopK
-
-[TopK](https://github.com/pytorch/pytorch/pull/193548) uses a register kernel for
-small fixed `K` values and radix-select kernels for larger continuous ranges. The
-initial override supports contiguous FP32 `gfx950` inputs, reduction over the last
-dimension, `largest=True`, `sorted=True`, and at least 256 rows on MI355X. Functional
-and `out=` variants are both supported, and deterministic mode preserves ATen's tie
-ordering. The register path covers `K={2,4,8,16}` for tuned power-of-two dimensions;
-radix-select covers tuned shape bands from `K=64` through `K=1024`.
-
-![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
-
-*Figure 3. TopK geometric-mean speedup over ATen; whiskers show the sampled range.*
-
-The register family reaches 4.81x and 4.02x geometric-mean speedups in
-non-deterministic and deterministic modes. Radix-select ranges from 1.40x to 1.97x
-geometrically across its tuned `K` bands.
 
 ### TorchInductor: Dense GEMM Autotuning
 
@@ -184,15 +164,33 @@ over ATen, and 1.10x over the faster baseline at each shape.
 
 ![TorchInductor BF16 dense GEMM speedup](_static/flydsl-pytorch-backend/flydsl-dense-gemm-performance.png)
 
-*Figure 4. BF16 dense NT GEMM speedup over the faster ATen/Triton baseline at each
+*Figure 3. BF16 dense NT GEMM speedup over the faster ATen/Triton baseline at each
 shape. Ratios within ±1% count as ties.*
 
 Results are the median of four accuracy-checked graph-replay runs. FlyDSL and Triton
 use the `EXHAUSTIVE` search space; ATen uses its default configuration.
 
-### Additional TorchInductor Operators
+### Additional Operator Results
 
-#### Grouped GEMM
+#### Eager: TopK
+
+[TopK](https://github.com/pytorch/pytorch/pull/193548) uses a register kernel for
+small fixed `K` values and radix-select kernels for larger continuous ranges. The
+initial override supports contiguous FP32 `gfx950` inputs, reduction over the last
+dimension, `largest=True`, `sorted=True`, and at least 256 rows on MI355X. Functional
+and `out=` variants are both supported, and deterministic mode preserves ATen's tie
+ordering. The register path covers `K={2,4,8,16}` for tuned power-of-two dimensions;
+radix-select covers tuned shape bands from `K=64` through `K=1024`.
+
+![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
+
+*Figure 4. TopK geometric-mean speedup over ATen; whiskers show the sampled range.*
+
+The register family reaches 4.81x and 4.02x geometric-mean speedups in
+non-deterministic and deterministic modes. Radix-select ranges from 1.40x to 1.97x
+geometrically across its tuned `K` bands.
+
+#### TorchInductor: Grouped GEMM
 
 The [`torch.nn.functional.grouped_mm`](https://github.com/pytorch/pytorch/pull/191475)
 template supports ragged 2D `A` and grouped `B[G, K, N]`. Its current gate requires
@@ -207,7 +205,7 @@ On the standard 14-shape suite, FlyDSL reaches a 1.21x geomean over Triton and a
 2.12x geomean over ATen, and is the best measured backend in 11 of 14 cases. It is
 also the best backend in all five ragged-`M` cases.
 
-#### MXFP8 and MXFP4 Scaled GEMM
+#### TorchInductor: MXFP8 and MXFP4 Scaled GEMM
 
 The [scaled GEMM integration](https://github.com/pytorch/pytorch/pull/193527) adds
 MXFP8 and MXFP4 BlockWise1x32 kernel families. MXFP8 uses E4M3 inputs, E8M0 block
