@@ -229,7 +229,7 @@ install a ROCm nightly or release that includes FlyDSL support, then install the
 optional runtime:
 
 ```bash
-python -m pip install "flydsl==0.3.1"
+python -m pip install "flydsl==0.3.0"
 ```
 
 ROCm builds continue to use PyTorch's `"cuda"` device string.
