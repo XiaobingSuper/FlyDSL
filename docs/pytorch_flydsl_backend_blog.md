@@ -267,7 +267,6 @@ The controller also supports `enable()`, `disable()`, an `enabled` property, and
 Enable FlyDSL as a GEMM autotuning candidate:
 
 ```bash
-TORCHINDUCTOR_MAX_AUTOTUNE_GEMM=1 \
 TORCHINDUCTOR_MAX_AUTOTUNE_GEMM_BACKENDS="ATEN,TRITON,FLYDSL" \
 FLYDSL_ENABLE_AUTOTUNING=1 \
 python my_script.py
@@ -281,12 +280,17 @@ import torch
 A = torch.randn(128, 4096, device="cuda", dtype=torch.bfloat16)
 B = torch.randn(14336, 4096, device="cuda", dtype=torch.bfloat16)
 
-@torch.compile(mode="max-autotune-no-cudagraphs")
+@torch.compile(mode="max-autotune")
 def f(a, b):
     return a @ b.T
 
 out = f(A, B)  # The first call compiles and benchmarks eligible choices.
 ```
+
+`max-autotune` enables template autotuning and CUDAGraphs on GPU. Use
+`max-autotune-no-cudagraphs` when graph capture is incompatible with the workload or
+when isolating non-graph execution. There is no separate
+`max-autotune-cudagraphs` mode.
 
 For the largest search space, additionally set:
 
@@ -309,8 +313,15 @@ The initial integration establishes the framework for a concrete expansion roadm
 - **Training support for grouped and normalization workloads.** Add grouped MM
   backward, scaled grouped MM forward/backward, and RMSNorm backward.
 - **Attention.** Add FlyDSL FlexAttention forward and backward templates.
-- **Lower deployment cost.** Continue work on heuristic-guided search, parallel
-  precompilation, persistent-cache measurement, and AOT-compatible packaging.
+- **Epilogue fusion.** Add and benchmark bias, activation, and pointwise epilogues so
+  TorchInductor can compare fused and unfused GEMM choices.
+- **Faster and portable autotuning.** Add heuristic-guided config pruning, parallel
+  precompilation, persistent artifact/selection caches, and importable/exportable
+  tuning configurations.
+- **AOT deployment.** Precompile FlyDSL kernels during export for AOTInductor
+  deployments that cannot autotune in production.
+- **End-to-end qualification.** Track compile time, cache-hit latency, and model-level
+  performance in addition to isolated kernel benchmarks.
 
 ## Conclusion
 
