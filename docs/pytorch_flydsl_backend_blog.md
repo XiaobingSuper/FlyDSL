@@ -21,9 +21,9 @@ another backend when it benchmarks faster.
 
 The initial integration focuses on RMSNorm, TopK, dense and grouped GEMM, and
 MXFP8/MXFP4 scaled GEMM on AMD `gfx950` GPUs. On MI355X, these kernels show clear
-gains over existing PyTorch choices for their targeted shape regions. The Results
-section summarizes warm, kernel-level measurements; first-call compilation and
-autotuning are excluded.
+gains over existing PyTorch choices for their targeted shape regions. The Performance
+Results section summarizes warm, kernel-level measurements; first-call compilation
+and autotuning are excluded.
 
 ## Why FlyDSL?
 
@@ -54,7 +54,7 @@ tensor/stream ABI, but keep separate routing, configuration, and caches.
 *Figure 1. Eager dispatch and TorchInductor autotuning independently use the optional
 FlyDSL compiler/runtime.*
 
-### Eager execution
+### Eager Execution
 
 The eager path extends PyTorch's `torch._native` DSL mechanism. A lightweight
 predicate first checks the device, dtype, shape, layout, and performance region. Only
@@ -74,7 +74,7 @@ This makes low-level kernel parameters—tile dimensions, pipeline stages, wave 
 output swizzles, and interleaving—part of PyTorch's normal shape-aware autotuning
 process instead of forcing one configuration across every workload.
 
-### Optional by construction
+### Optional by Construction
 
 FlyDSL remains an optional dependency. `import torch` does not import FlyDSL or
 initialize the ROCm runtime, and the integration retains existing PyTorch choices for
@@ -98,10 +98,11 @@ TorchInductor, then summarize the additional operators included in the first rel
 
 ### Eager: RMSNorm
 
-RMSNorm is the first detailed example of the eager integration. The FlyDSL kernel
-implements the fused forward path and returns both the normalized output and the FP32
-reciprocal standard deviation required by the operator contract. Backward continues
-through the existing PyTorch implementation.
+[RMSNorm](https://github.com/pytorch/pytorch/pull/191447) is the first detailed
+example of the eager integration. The FlyDSL kernel implements the fused forward path
+and returns both the normalized output and the FP32 reciprocal standard deviation
+required by the operator contract. Backward continues through the existing PyTorch
+implementation.
 
 N-dimensional inputs are logically flattened to `(M, N)`. The current `gfx950`
 performance gate supports contiguous FP16, BF16, or FP32 input and weight tensors,
@@ -131,13 +132,13 @@ reaches 3.66x.
 
 ### Eager: TopK
 
-TopK uses a register kernel for small fixed `K` values and radix-select kernels for
-larger continuous ranges. The initial override supports contiguous FP32 `gfx950`
-inputs, reduction over the last dimension, `largest=True`, `sorted=True`, and at
-least 256 rows on MI355X. Functional and `out=` variants are both supported, and
-deterministic mode preserves ATen's tie ordering. The register path covers
-`K={2,4,8,16}` for tuned power-of-two dimensions; radix-select covers tuned shape
-bands from `K=64` through `K=1024`.
+[TopK](https://github.com/pytorch/pytorch/pull/193548) uses a register kernel for
+small fixed `K` values and radix-select kernels for larger continuous ranges. The
+initial override supports contiguous FP32 `gfx950` inputs, reduction over the last
+dimension, `largest=True`, `sorted=True`, and at least 256 rows on MI355X. Functional
+and `out=` variants are both supported, and deterministic mode preserves ATen's tie
+ordering. The register path covers `K={2,4,8,16}` for tuned power-of-two dimensions;
+radix-select covers tuned shape bands from `K=64` through `K=1024`.
 
 ![Eager TopK speedup over ATen](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
 
@@ -149,8 +150,10 @@ geometrically across its tuned `K` bands.
 
 ### TorchInductor: Dense GEMM Autotuning
 
-The first detailed TorchInductor target is static 2D `aten.mm(A, B.T)` on `gfx950`:
-row-major `A[M, K]` is multiplied by `B[N, K].T` to produce `C[M, N]`.
+The first detailed TorchInductor target is
+[dense GEMM](https://github.com/pytorch/pytorch/pull/190903): static 2D
+`aten.mm(A, B.T)` on `gfx950`, where row-major `A[M, K]` is multiplied by
+`B[N, K].T` to produce `C[M, N]`.
 
 Eligibility currently requires:
 
@@ -191,10 +194,10 @@ use the `EXHAUSTIVE` search space; ATen uses its default configuration.
 
 #### Grouped GEMM
 
-The `torch.nn.functional.grouped_mm` template supports ragged 2D `A` and grouped
-`B[G, K, N]`. Its current gate requires FP16/BF16, static `N` and `K` divisible by
-32, and eligible alignment and strides. The persistent kernel is designed for
-MoE-style workloads with uneven or empty groups.
+The [`torch.nn.functional.grouped_mm`](https://github.com/pytorch/pytorch/pull/191475)
+template supports ragged 2D `A` and grouped `B[G, K, N]`. Its current gate requires
+FP16/BF16, static `N` and `K` divisible by 32, and eligible alignment and strides.
+The persistent kernel is designed for MoE-style workloads with uneven or empty groups.
 
 ![Grouped GEMM speedups](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
 
@@ -206,8 +209,9 @@ also the best backend in all five ragged-`M` cases.
 
 #### MXFP8 and MXFP4 Scaled GEMM
 
-The scaled GEMM integration adds MXFP8 and MXFP4 BlockWise1x32 kernel families.
-MXFP8 uses E4M3 inputs, E8M0 block scales, FP32 accumulation, and FP16/BF16 output.
+The [scaled GEMM integration](https://github.com/pytorch/pytorch/pull/193527) adds
+MXFP8 and MXFP4 BlockWise1x32 kernel families. MXFP8 uses E4M3 inputs, E8M0 block
+scales, FP32 accumulation, and FP16/BF16 output.
 
 ![MXFP8 speedup over ATen](_static/flydsl-pytorch-backend/flydsl-mxfp8-performance.png)
 
@@ -215,12 +219,14 @@ MXFP8 uses E4M3 inputs, E8M0 block scales, FP32 accumulation, and FP16/BF16 outp
 back-to-back through `aten._scaled_mm_v2` with the same graph-replay harness.*
 
 Across 13 shapes, FlyDSL reaches a 1.42x geomean over ATen. A separately measured
-Composable Kernel reference shows a 1.15x geomean advantage for FlyDSL.
+Composable Kernel reference, using a standalone C++ harness, shows a 1.15x geomean
+advantage for FlyDSL.
 
 ## How to Try It
 
-Install a recent PyTorch ROCm nightly or release that includes FlyDSL support, then
-install the tested optional runtime:
+Use the [PyTorch installation selector](https://pytorch.org/get-started/locally/) to
+install a ROCm nightly or release that includes FlyDSL support, then install the tested
+optional runtime:
 
 ```bash
 python -m pip install "flydsl==0.3.1"
@@ -318,15 +324,3 @@ We plan to grow coverage only where correctness, maintainability, and measured
 performance justify it. Feedback and new workload ideas are welcome in the
 [PyTorch RFC](https://github.com/pytorch/pytorch/issues/190875) and
 [PyTorch issue tracker](https://github.com/pytorch/pytorch/issues/new/choose).
-
-## References
-
-- [RFC: Integrating FlyDSL with PyTorch DSL Extension Points](https://github.com/pytorch/pytorch/issues/190875)
-- [FlyDSL native-op backend infrastructure](https://github.com/pytorch/pytorch/pull/191446)
-- [Eager FlyDSL RMSNorm](https://github.com/pytorch/pytorch/pull/191447)
-- [Eager FlyDSL TopK](https://github.com/pytorch/pytorch/pull/193548)
-- [TorchInductor FlyDSL dense GEMM](https://github.com/pytorch/pytorch/pull/190903)
-- [TorchInductor FlyDSL grouped GEMM](https://github.com/pytorch/pytorch/pull/191475)
-- [TorchInductor FlyDSL MXFP8/MXFP4 scaled GEMM](https://github.com/pytorch/pytorch/pull/193527)
-- [FlyDSL repository and documentation](https://github.com/ROCm/FlyDSL)
-- [Generating State-of-the-Art GEMMs with TorchInductor's CuteDSL backend](https://pytorch.org/blog/gemms-torchinductor-cutedsl-backend/)
