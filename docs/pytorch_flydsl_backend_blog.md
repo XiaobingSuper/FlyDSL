@@ -81,9 +81,6 @@ Eager and compiler controls also remain independent. Disabling
 TorchInductor. Removing `FLYDSL` from the GEMM backend list disables compiler
 templates without changing eager overrides.
 
-Focused tests cover runtime detection, fallback, operator accuracy, cache reuse,
-autotuning, deterministic TopK ties, and `gfx950` end-to-end execution.
-
 ## Performance Results
 
 We first use RMSNorm and dense GEMM to explain the eager and TorchInductor paths in
@@ -274,9 +271,7 @@ out = f(A, B)  # The first call compiles and benchmarks eligible choices.
 ```
 
 `max-autotune` enables template autotuning and CUDAGraphs on GPU. Use
-`max-autotune-no-cudagraphs` when graph capture is incompatible with the workload or
-when isolating non-graph execution. There is no separate
-`max-autotune-cudagraphs` mode.
+`max-autotune-no-cudagraphs` for workloads that are incompatible with graph capture.
 
 For the largest search space, additionally set:
 
@@ -289,25 +284,17 @@ autotuning time. The curated default search is the practical starting point.
 
 ## What's Next
 
-The initial integration establishes the framework for a concrete expansion roadmap:
+The initial integration establishes the framework for four expansion areas:
 
-- **More FP16/BF16 GEMM layouts and parallelism on `gfx950`.** Extend the initial NT
-  path with Split-K and NN/TN/TT layouts.
-- **Broader scaled-matmul coverage.** Add `PTPC/block_scale` `scaled_mm` support in
-  TorchInductor, followed by MXFP8 `scaled_mm` backward. `PTPC/block_scale` support
-  is planned as a lower-priority follow-up.
-- **Training support for grouped and normalization workloads.** Add grouped MM
-  backward, scaled grouped MM forward/backward, and RMSNorm backward.
-- **Attention.** Add FlyDSL FlexAttention forward and backward templates.
-- **Epilogue fusion.** Add and benchmark bias, activation, and pointwise epilogues so
-  TorchInductor can compare fused and unfused GEMM choices.
-- **Faster and portable autotuning.** Add heuristic-guided config pruning, parallel
-  precompilation, persistent artifact/selection caches, and importable/exportable
-  tuning configurations.
-- **AOT deployment.** Precompile FlyDSL kernels during export for AOTInductor
-  deployments that cannot autotune in production.
-- **End-to-end qualification.** Track compile time, cache-hit latency, and model-level
-  performance in addition to isolated kernel benchmarks.
+- **Broader GEMM coverage.** Add FP16/BF16 Split-K and NN/TN/TT layouts, extend
+  `PTPC/block_scale` `scaled_mm`, and add MXFP8 `scaled_mm` backward.
+- **Training and attention.** Add grouped MM backward, scaled grouped MM
+  forward/backward, RMSNorm backward, and FlexAttention forward/backward.
+- **Fusion and autotuning.** Benchmark GEMM epilogue fusion; add heuristic config
+  pruning, parallel precompilation, persistent caches, and portable tuning
+  configurations.
+- **Deployment and qualification.** Add AOTInductor precompilation and track compile
+  time, cache-hit latency, and model-level performance alongside kernel benchmarks.
 
 ## Conclusion
 
