@@ -81,10 +81,8 @@ Eager and compiler controls also remain independent. Disabling
 TorchInductor. Removing `FLYDSL` from the GEMM backend list disables compiler
 templates without changing eager overrides.
 
-The integration is covered by tests for optional dependency detection, import
-laziness, eager controls, cache keys, operator accuracy, generated wrappers,
-configuration filtering, autotuning, deterministic TopK ties, and focused `gfx950`
-end-to-end compilation and execution.
+Focused tests cover runtime detection, fallback, operator accuracy, cache reuse,
+autotuning, deterministic TopK ties, and `gfx950` end-to-end execution.
 
 ## Performance Results
 
@@ -146,28 +144,16 @@ Eligibility currently requires:
 - an AMD `gfx950` GPU;
 - GEMM max-autotuning with `FLYDSL` enabled as a candidate backend.
 
-The wrapper adapts PyTorch's right-hand-side transpose view to FlyDSL's `[N, K]`
-contract while preserving supported row strides and storage offsets. Before
-benchmarking, the lowering filters configurations that cannot support the concrete
-shape.
-
-At the kernel level, workgroups stage `A` and `B` tiles through LDS, reuse those tiles
-across waves, and issue MFMA operations into register-blocked accumulators. Tile
-dimensions, pipeline depth, wave layout, `GROUP_M` swizzling, and half-tile
-interleaving are template parameters selected by autotuning.
-
-Compiled dispatchers are cached by their compile-time configuration while tensor
-layouts remain runtime inputs. FlyDSL's persistent artifacts live under
-TorchInductor's cache root by default, unless `FLYDSL_RUNTIME_CACHE_DIR` is explicitly
-configured.
+For each eligible shape, TorchInductor filters incompatible FlyDSL configurations,
+benchmarks the remaining choices alongside existing backends, and caches the winner.
 
 Across 15 BF16 NT GEMM shapes, FlyDSL achieves a 1.19x geomean over Triton, 1.15x
 over ATen, and 1.10x over the faster baseline at each shape.
 
 ![TorchInductor BF16 dense GEMM speedup](_static/flydsl-pytorch-backend/flydsl-dense-gemm-performance.png)
 
-*Figure 3. BF16 dense NT GEMM speedup over the faster ATen/Triton baseline at each
-shape. Ratios within ±1% count as ties.*
+*Figure 3. BF16 dense NT GEMM speedup over the faster ATen/Triton baseline. Shape
+labels are `M × N × K`; ratios within ±1% count as ties.*
 
 Results are the median of four accuracy-checked graph-replay runs. FlyDSL and Triton
 use the `EXHAUSTIVE` search space; ATen uses its default configuration.
