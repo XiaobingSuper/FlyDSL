@@ -30,6 +30,12 @@ to GPU/ROCDL.
 
 .. toctree::
    :maxdepth: 2
+   :caption: Integrations
+
+   pytorch_flydsl_backend_blog
+
+.. toctree::
+   :maxdepth: 2
    :caption: API Reference
 
    api/dsl
