@@ -1,27 +1,40 @@
 # Accelerating PyTorch on AMD MI350-Series GPUs with FlyDSL
 
 PyTorch users on AMD MI350-series GPUs can now use
-[FlyDSL](https://github.com/ROCm/FlyDSL) to accelerate RMSNorm, TopK, and dense and
-grouped matrix multiplication through familiar PyTorch APIs. FlyDSL is a
-Python-based language for writing GPU kernels; its optimized implementations are
-available as an optional backend for these operations.
+[FlyDSL](https://github.com/ROCm/FlyDSL) kernels for dense and grouped matrix
+multiplication, RMSNorm, and TopK. The integration covers both eager execution
+and `torch.compile` through familiar PyTorch APIs.
 
-The benefits span different parts of a model workload. Dense GEMM improves by
-**1.10x on geometric mean over the faster ATen/Triton baseline** across the
-measured BF16 NT suite. For small-K TopK, the measured geometric-mean speedup
-over ATen reaches **4.82x with deterministic algorithms disabled**. The sections
-below show where these gains occur, the supported configurations, and how to
-enable the backend.
+FlyDSL is a Python-based language for writing GPU kernels, available in PyTorch
+as an optional backend. In the reported operator benchmarks, it delivers a
+**1.10x geometric-mean speedup for dense GEMM over the faster ATen/Triton
+baseline** across the measured BF16 NT suite, and **4.82x for small-K TopK over
+ATen with deterministic algorithms disabled**. These results illustrate benefits
+across both matrix multiplication and selection workloads.
+
+## How FlyDSL Fits into PyTorch
+
+The integration makes FlyDSL kernels accessible through two execution paths.
+In **eager mode**, eligible RMSNorm and TopK calls use FlyDSL automatically when
+the optional runtime is installed and enabled. PyTorch checks the inputs and
+retains its ATen implementation for unsupported cases.
+
+With **`torch.compile`**, FlyDSL joins the set of implementations that
+TorchInductor can benchmark for dense and grouped GEMM. When FlyDSL and GEMM
+autotuning are enabled, Inductor compares eligible candidates from the configured
+backends and selects the fastest measured implementation for each workload.
+
+![PyTorch APIs feed two execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; torch.compile benchmarks enabled ATen, Triton, and FlyDSL GEMM candidates and runs the fastest on an AMD MI350-series GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-architecture.png)
+
+*Figure 1. FlyDSL in PyTorch, with the optional package installed and FlyDSL
+enabled for GEMM autotuning. Eager execution dispatches by input support;
+TorchInductor selects by measured performance. Both paths preserve the familiar
+PyTorch operator APIs.*
 
 ## Supported Features
 
-Current support targets AMD MI350-series GPUs with the `gfx950` architecture and
-covers two execution modes:
-
-- **Eager execution:** eligible RMSNorm and TopK calls use FlyDSL automatically
-  when the optional runtime is installed.
-- **`torch.compile`:** dense and grouped GEMM can use FlyDSL alongside ATen and
-  Triton, with TorchInductor choosing the fastest measured implementation.
+Current support targets AMD MI350-series GPUs with the `gfx950` architecture.
+The following features are available in PyTorch:
 
 | Operation | Execution mode | Data types | Supported scope |
 |---|---|---|---|
@@ -33,8 +46,9 @@ covers two execution modes:
 Dense GEMM's [four-layout support](https://github.com/pytorch/pytorch/pull/194981)
 accepts row-major and column-major inputs, including eligible transpose views.
 Grouped GEMM supports different row counts per group, allowing experts to process
-uneven token assignments. RMSNorm backward continues through PyTorch's existing
-implementation.
+uneven token assignments. Its current input-layout requirements are separate
+from dense GEMM's four-layout coverage. RMSNorm backward continues through
+PyTorch's existing implementation.
 
 Each operation has shape and alignment requirements. The detailed
 [dense GEMM](https://github.com/pytorch/pytorch/pull/194981),
@@ -64,7 +78,7 @@ by **1.33x**.
 
 ![FlyDSL dense GEMM speedup for all 15 BF16 NT shapes](_static/flydsl-pytorch-backend/flydsl-dense-gemm-performance.png)
 
-*Figure 1. BF16 NT GEMM on MI355X, relative to the faster ATen/Triton baseline at
+*Figure 2. BF16 NT GEMM on MI355X, relative to the faster ATen/Triton baseline at
 each shape. All 15 cases are shown: 10 wins, three ties, and two losses using a
 ±1% tie band.*
 
@@ -85,7 +99,7 @@ in **11 of 14 cases**, and in all five separately measured ragged-`M` cases.
 
 ![Grouped GEMM geometric-mean speedup across standard, K/N-variant, and ragged-M suites](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
 
-*Figure 2. BF16 grouped GEMM on gfx950. Each pair of bars summarizes a complete
+*Figure 3. BF16 grouped GEMM on gfx950. Each pair of bars summarizes a complete
 suite: 14 standard shapes, five K/N variants, or five ragged-M cases.*
 
 The ragged cases include imbalanced token counts and empty groups, making them
@@ -104,7 +118,7 @@ rather than `4096`—show larger gains, reaching **3.66x**.
 
 ![RMSNorm speedups for aligned and off-by-one hidden dimensions](_static/flydsl-pytorch-backend/flydsl-rmsnorm-performance.png)
 
-*Figure 3. All 22 reported RMSNorm cases on MI355X. Labels identify dtype and
+*Figure 4. All 22 reported RMSNorm cases on MI355X. Labels identify dtype and
 M × N, where M is the row count and N the normalized dimension. Both panels use
 the same speedup scale.*
 
@@ -125,7 +139,7 @@ from **1.40x to 1.97x**.
 
 ![TopK geometric-mean speedup by K band and determinism setting](_static/flydsl-pytorch-backend/flydsl-topk-performance.png)
 
-*Figure 4. FP32 TopK on MI355X, compared with ATen under the same determinism
+*Figure 5. FP32 TopK on MI355X, compared with ATen under the same determinism
 setting. The bars aggregate all 33 reported cases by kernel family and K band.*
 
 The small-K register path shows the largest average gain. The radix-select paths
@@ -230,7 +244,8 @@ The next steps extend the range of workloads that can benefit from FlyDSL:
 These extensions are in progress and are outside the current support and
 performance results presented here.
 
-FlyDSL gives PyTorch users on AMD GPUs another way to accelerate common
-operations while keeping their existing APIs. Try it on your workloads and share
-results or feature requests through the
+The current integration connects FlyDSL kernel development to both eager
+operators and compiled GEMMs, giving PyTorch users a practical way to benefit
+from optimized AMD kernels. Try it on your workloads and share results or
+feature requests through the
 [PyTorch issue tracker](https://github.com/pytorch/pytorch/issues/new/choose).

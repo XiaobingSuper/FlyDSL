@@ -1,7 +1,7 @@
-"""Rebuild the four published operator charts from the accompanying CSV files.
+"""Rebuild the architecture overview and four published operator charts.
 
 Run with Python, Matplotlib, and NumPy. No GPU or PyTorch installation is needed.
-Source measurements and their limits are documented in README.md.
+Charts use the accompanying CSV files. Sources and limits are in README.md.
 """
 
 import csv
@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Patch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch
 
 ROOT = Path(__file__).resolve().parent
 ORANGE = "#E4492C"
@@ -69,6 +69,124 @@ def save(fig, name):
         if extension == "svg":
             output.write_text("\n".join(line.rstrip() for line in output.read_text().splitlines()) + "\n")
     plt.close(fig)
+
+
+def architecture():
+    fig, ax = plt.subplots(figsize=(12.6, 8.6))
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    ax.set(xlim=(0, 100), ylim=(0, 100))
+    ax.axis("off")
+    title(
+        fig,
+        "Two paths from PyTorch to FlyDSL kernels",
+        "Automatic dispatch in eager mode · autotuning with torch.compile",
+    )
+
+    def box(x, y, width, height, fill="white", edge="#CBD5DF"):
+        ax.add_patch(
+            FancyBboxPatch(
+                (x, y),
+                width,
+                height,
+                boxstyle="round,pad=0,rounding_size=1.1",
+                linewidth=1.2,
+                edgecolor=edge,
+                facecolor=fill,
+                zorder=2,
+            )
+        )
+
+    def label(x, y, text, size=13, bold=False, color=INK):
+        ax.text(
+            x,
+            y,
+            text,
+            fontsize=size,
+            fontweight="bold" if bold else "normal",
+            color=color,
+            ha="center",
+            va="center",
+            zorder=3,
+        )
+
+    def line(points):
+        x, y = zip(*points)
+        ax.plot(x, y, color="#7D8E9E", linewidth=1.4, zorder=3)
+
+    def arrow(start, end):
+        ax.add_patch(
+            FancyArrowPatch(
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=13,
+                linewidth=1.4,
+                color="#7D8E9E",
+                shrinkA=0,
+                shrinkB=0,
+                zorder=3,
+            )
+        )
+
+    box(18, 78, 64, 10)
+    label(50, 84.5, "PyTorch application", size=15, bold=True)
+    label(50, 80.6, "torch.mm · F.grouped_mm · F.rms_norm · torch.topk", size=12)
+
+    # Each mode has its own selection policy; both execute on the same GPU.
+    box(4, 19, 44, 53, fill="#F6F8FB", edge=GRID)
+    box(52, 19, 44, 53, fill="#F6F8FB", edge=GRID)
+    line([(50, 78), (50, 75), (26, 75)])
+    line([(50, 75), (74, 75)])
+    arrow((26, 75), (26, 72))
+    arrow((74, 75), (74, 72))
+
+    label(26, 67.7, "Eager execution", size=16, bold=True)
+    label(26, 63.4, "RMSNorm · TopK", size=12)
+    arrow((26, 61), (26, 59))
+    box(9, 49, 34, 10)
+    label(26, 55.4, "Dispatch by input support", bold=True)
+    label(26, 51.7, "Shape · dtype · layout", size=11.5, color="#526477")
+    line([(26, 49), (26, 46.5), (16.5, 46.5)])
+    line([(26, 46.5), (35.5, 46.5)])
+    arrow((16.5, 46.5), (16.5, 39))
+    arrow((35.5, 46.5), (35.5, 39))
+    # Light backgrounds keep branch labels legible over the connectors.
+    for x, text in [(16.5, "Eligible inputs"), (35.5, "Other inputs")]:
+        ax.text(
+            x,
+            43,
+            text,
+            fontsize=11,
+            ha="center",
+            va="center",
+            bbox={"facecolor": "#F6F8FB", "edgecolor": "none", "pad": 2},
+            zorder=4,
+        )
+    box(8, 31, 17, 8, fill="#FFF0EB", edge=ORANGE)
+    box(27, 31, 17, 8)
+    label(16.5, 35, "FlyDSL kernel", bold=True, color=ORANGE)
+    label(35.5, 35, "ATen kernel", bold=True)
+    line([(16.5, 31), (16.5, 25.5), (26, 25.5)])
+    line([(35.5, 31), (35.5, 25.5), (26, 25.5)])
+    arrow((26, 25.5), (26, 14))
+
+    label(74, 67.7, "torch.compile", size=16, bold=True)
+    label(74, 63.4, "Dense GEMM · Grouped GEMM", size=12)
+    arrow((74, 61), (74, 59))
+    box(56, 45, 36, 14)
+    label(74, 55.4, "Benchmark enabled candidates", size=12.5, bold=True)
+    for x, name in [(57, "ATen"), (69, "Triton"), (81, "FlyDSL")]:
+        flydsl = name == "FlyDSL"
+        box(x, 47, 10, 5, fill="#FFF0EB" if flydsl else "#F6F8FB", edge=ORANGE if flydsl else GRID)
+        label(x + 5, 49.5, name, size=12, bold=True, color=ORANGE if flydsl else INK)
+    arrow((74, 45), (74, 37))
+    box(57, 28, 34, 9)
+    label(74, 32.5, "Run fastest measured kernel", size=12.5, bold=True)
+    arrow((74, 28), (74, 14))
+
+    box(18, 4, 64, 10, fill="#EDF3F8", edge=BLUE)
+    label(50, 9, "AMD MI350-series GPU (gfx950)", size=15, bold=True)
+    save(fig, "flydsl-pytorch-architecture")
 
 
 def dense_gemm():
@@ -223,6 +341,7 @@ def topk():
 
 
 if __name__ == "__main__":
+    architecture()
     dense_gemm()
     grouped_gemm()
     rmsnorm()
