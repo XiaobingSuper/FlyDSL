@@ -107,15 +107,15 @@ z
 " clip-path="url(#p4dc9a84af4)" style="fill: #ffffff; stroke: #cbd5df; stroke-width: 1.2; stroke-linejoin: miter"/>
    </g>
    <g id="patch_8">
-    <path d="M 518.0112 340.56
-L 824.6448 340.56
-Q 834.624 340.56 834.624 333.7488
+    <path d="M 518.0112 352.944
+L 824.6448 352.944
+Q 834.624 352.944 834.624 346.1328
 L 834.624 260.6832
 Q 834.624 253.872 824.6448 253.872
 L 518.0112 253.872
 Q 508.032 253.872 508.032 260.6832
-L 508.032 333.7488
-Q 508.032 340.56 518.0112 340.56
+L 508.032 346.1328
+Q 508.032 352.944 518.0112 352.944
 z
 " clip-path="url(#p4dc9a84af4)" style="fill: #ffffff; stroke: #cbd5df; stroke-width: 1.2; stroke-linejoin: miter"/>
    </g>
@@ -188,7 +188,7 @@ z
     <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="453.6" y="100.056469" transform="rotate(-0 453.6 100.056469)">PyTorch application</text>
    </g>
    <g id="text_2">
-    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="453.6" y="123.269175" transform="rotate(-0 453.6 123.269175)">torch.mm · F.grouped_mm · F.rms_norm · torch.topk</text>
+    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="453.6" y="123.43605" transform="rotate(-0 453.6 123.43605)">Matrix multiplication · normalization · selection</text>
    </g>
    <g id="line2d_1">
     <path d="M 453.6 136.224
@@ -306,7 +306,7 @@ z
     <text style="font-weight: 700; font-size: 16px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="204.4166" transform="rotate(-0 671.328 204.4166)">torch.compile</text>
    </g>
    <g id="text_10">
-    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="229.93845" transform="rotate(-0 671.328 229.93845)">Dense GEMM · Grouped GEMM</text>
+    <text style="font-size: 11.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="229.800481" transform="rotate(-0 671.328 229.800481)">Dense / grouped GEMM · MXFP8 / MXFP4</text>
    </g>
    <g id="patch_20">
     <path d="M 671.328 241.488
@@ -319,7 +319,7 @@ z
 " clip-path="url(#p4dc9a84af4)" style="fill: #7d8e9e; stroke: #7d8e9e; stroke-width: 1.4; stroke-linecap: round"/>
    </g>
    <g id="text_11">
-    <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="279.612419" transform="rotate(-0 671.328 279.612419)">Benchmark enabled candidates</text>
+    <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="279.563591" transform="rotate(-0 671.328 279.563591)">Benchmark eligible candidates</text>
    </g>
    <g id="text_12">
     <text style="font-weight: 700; font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="562.464" y="316.00725" transform="rotate(-0 562.464 316.00725)">ATen</text>
@@ -330,9 +330,12 @@ z
    <g id="text_14">
     <text style="font-weight: 700; font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #e4492c" x="780.192" y="315.960375" transform="rotate(-0 780.192 315.960375)">FlyDSL</text>
    </g>
+   <g id="text_15">
+    <text style="font-size: 10.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #526477" x="671.328" y="344.695744" transform="rotate(-0 671.328 344.695744)">Candidates depend on the operation</text>
+   </g>
    <g id="patch_21">
-    <path d="M 671.328 340.56
-Q 671.328 365.328 671.328 388.530752
+    <path d="M 671.328 352.944
+Q 671.328 371.52 671.328 388.530752
 " clip-path="url(#p4dc9a84af4)" style="fill: none; stroke: #7d8e9e; stroke-width: 1.4; stroke-linecap: round"/>
     <path d="M 673.928 383.330752
 L 671.328 388.530752
@@ -340,7 +343,7 @@ L 668.728 383.330752
 z
 " clip-path="url(#p4dc9a84af4)" style="fill: #7d8e9e; stroke: #7d8e9e; stroke-width: 1.4; stroke-linecap: round"/>
    </g>
-   <g id="text_15">
+   <g id="text_16">
     <text style="font-weight: 700; font-size: 12.5px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="671.328" y="421.409219" transform="rotate(-0 671.328 421.409219)">Run fastest measured kernel</text>
    </g>
    <g id="patch_22">
@@ -353,10 +356,10 @@ L 668.728 525.746752
 z
 " clip-path="url(#p4dc9a84af4)" style="fill: #7d8e9e; stroke: #7d8e9e; stroke-width: 1.4; stroke-linecap: round"/>
    </g>
-   <g id="text_16">
+   <g id="text_17">
     <text style="font-weight: 700; font-size: 15px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="453.6" y="567.552469" transform="rotate(-0 453.6 567.552469)">AMD MI350-series GPU (gfx950)</text>
    </g>
-   <g id="text_17">
+   <g id="text_18">
     <g id="patch_23">
      <path d="M 108.993156 360.246969
 L 190.382844 360.246969
@@ -367,7 +370,7 @@ z
     </g>
     <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="149.688" y="355.979312" transform="rotate(-0 149.688 355.979312)">Eligible inputs</text>
    </g>
-   <g id="text_18">
+   <g id="text_19">
     <g id="patch_24">
      <path d="M 285.699281 360.246969
 L 358.412719 360.246969
@@ -379,10 +382,10 @@ z
     <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="322.056" y="355.979312" transform="rotate(-0 322.056 355.979312)">Other inputs</text>
    </g>
   </g>
-  <g id="text_19">
+  <g id="text_20">
    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="36.288" y="36.109031" transform="rotate(-0 36.288 36.109031)">Two paths from PyTorch to FlyDSL kernels</text>
   </g>
-  <g id="text_20">
+  <g id="text_21">
    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="36.288" y="58.150125" transform="rotate(-0 36.288 58.150125)">Automatic dispatch in eager mode · autotuning with torch.compile</text>
   </g>
  </g>

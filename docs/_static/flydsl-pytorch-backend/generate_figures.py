@@ -1,4 +1,4 @@
-"""Rebuild the architecture overview and four published operator charts.
+"""Rebuild the architecture overview and five published operator charts.
 
 Run with Python, Matplotlib, and NumPy. No GPU or PyTorch installation is needed.
 Charts use the accompanying CSV files. Sources and limits are in README.md.
@@ -130,7 +130,7 @@ def architecture():
 
     box(18, 78, 64, 10)
     label(50, 84.5, "PyTorch application", size=15, bold=True)
-    label(50, 80.6, "torch.mm · F.grouped_mm · F.rms_norm · torch.topk", size=12)
+    label(50, 80.6, "Matrix multiplication · normalization · selection", size=12)
 
     # Each mode has its own selection policy; both execute on the same GPU.
     box(4, 19, 44, 53, fill="#F6F8FB", edge=GRID)
@@ -171,15 +171,16 @@ def architecture():
     arrow((26, 25.5), (26, 14))
 
     label(74, 67.7, "torch.compile", size=16, bold=True)
-    label(74, 63.4, "Dense GEMM · Grouped GEMM", size=12)
+    label(74, 63.4, "Dense / grouped GEMM · MXFP8 / MXFP4", size=11.5)
     arrow((74, 61), (74, 59))
-    box(56, 45, 36, 14)
-    label(74, 55.4, "Benchmark enabled candidates", size=12.5, bold=True)
+    box(56, 43, 36, 16)
+    label(74, 55.4, "Benchmark eligible candidates", size=12.5, bold=True)
     for x, name in [(57, "ATen"), (69, "Triton"), (81, "FlyDSL")]:
         flydsl = name == "FlyDSL"
         box(x, 47, 10, 5, fill="#FFF0EB" if flydsl else "#F6F8FB", edge=ORANGE if flydsl else GRID)
         label(x + 5, 49.5, name, size=12, bold=True, color=ORANGE if flydsl else INK)
-    arrow((74, 45), (74, 37))
+    label(74, 44.8, "Candidates depend on the operation", size=10.5, color="#526477")
+    arrow((74, 43), (74, 37))
     box(57, 28, 34, 9)
     label(74, 32.5, "Run fastest measured kernel", size=12.5, bold=True)
     arrow((74, 28), (74, 14))
@@ -222,6 +223,49 @@ def dense_gemm():
     )
     print(f"Dense: geomean vs faster baseline {geomean(speed):.4f}; {wins}/{ties}/{losses}")
     save(fig, "flydsl-dense-gemm-performance")
+
+
+def mxfp_gemm():
+    data = rows("mxfp_gemm.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, 10.4), sharey=True)
+    fig.subplots_adjust(left=0.215, right=0.97, top=0.82, bottom=0.13, wspace=0.22)
+    title(
+        fig,
+        "MXFP scaled GEMM: low-precision performance across shapes",
+        "MI355X · NT layout · 17 shapes per format · geometric means include every case",
+    )
+    for ax, fmt, reference in zip(axes, ["mxfp8", "mxfp4"], ["CK", "AITER Triton"]):
+        subset = [r for r in data if r["format"] == fmt]
+        labels = [" × ".join(r[k] for k in ("m", "n", "k")) for r in subset]
+        positions = np.r_[np.arange(len(subset)), len(subset) + 0.65]
+        for baseline, color, offset, legend in [
+            ("aten", ORANGE, -0.17, "vs ATen"),
+            ("reference", BLUE, 0.17, f"vs {reference}"),
+        ]:
+            speed = [float(r["flydsl_tflops"]) / float(r[f"{baseline}_tflops"]) for r in subset]
+            values = np.r_[speed, geomean(speed)]
+            ax.barh(positions + offset, values, height=0.28, color=color, label=legend)
+            for y, value in zip(positions + offset, values):
+                ax.text(max(value, 1) + 0.04, y, f"{value:.2f}×", va="center", fontsize=11)
+            print(
+                f"{fmt.upper()} vs {legend[3:]}: geomean={geomean(speed):.4f}, range={min(speed):.4f}–{max(speed):.4f}"
+            )
+        ax.set_yticks(positions, labels + ["Geometric mean"], fontsize=11)
+        ax.set_ylim(positions[-1] + 0.7, -0.8)
+        style(ax, 3.2, [0, 1, 2, 3])
+        ax.set_xlabel("FlyDSL speedup", labelpad=10)
+        ax.set_title(fmt.upper(), fontsize=15, fontweight="bold", loc="left", pad=38)
+        ax.legend(loc="lower left", bbox_to_anchor=(-0.025, 1.008), ncol=2, frameon=False, fontsize=11)
+        if ax is axes[0]:
+            ax.get_yticklabels()[-1].set_fontweight("bold")
+    fig.text(0.04, 0.048, "Shape labels: M × N × K · dashed line = comparison baseline", fontsize=11)
+    fig.text(
+        0.04,
+        0.020,
+        "CK timing includes dynamic A-scale shuffling; one-time static B-scale preprocessing is excluded.",
+        fontsize=11,
+    )
+    save(fig, "flydsl-mxfp-gemm-performance")
 
 
 def grouped_gemm():
@@ -343,6 +387,7 @@ def topk():
 if __name__ == "__main__":
     architecture()
     dense_gemm()
+    mxfp_gemm()
     grouped_gemm()
     rmsnorm()
     topk()
