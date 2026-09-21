@@ -228,43 +228,30 @@ def dense_gemm():
 def mxfp_gemm():
     data = rows("mxfp_gemm.csv")
     fig, axes = plt.subplots(1, 2, figsize=(12.6, 10.4), sharey=True)
-    fig.subplots_adjust(left=0.215, right=0.97, top=0.82, bottom=0.13, wspace=0.22)
+    fig.subplots_adjust(left=0.215, right=0.97, top=0.855, bottom=0.11, wspace=0.22)
     title(
         fig,
         "MXFP scaled GEMM: low-precision performance across shapes",
-        "MI355X · NT layout · 17 shapes per format · geometric means include every case",
+        "MI355X · NT layout · speedup over ATen · geometric means include all 17 shapes",
     )
-    for ax, fmt, reference in zip(axes, ["mxfp8", "mxfp4"], ["CK", "AITER Triton"]):
+    for ax, fmt in zip(axes, ["mxfp8", "mxfp4"]):
         subset = [r for r in data if r["format"] == fmt]
         labels = [" × ".join(r[k] for k in ("m", "n", "k")) for r in subset]
         positions = np.r_[np.arange(len(subset)), len(subset) + 0.65]
-        for baseline, color, offset, legend in [
-            ("aten", ORANGE, -0.17, "vs ATen"),
-            ("reference", BLUE, 0.17, f"vs {reference}"),
-        ]:
-            speed = [float(r["flydsl_tflops"]) / float(r[f"{baseline}_tflops"]) for r in subset]
-            values = np.r_[speed, geomean(speed)]
-            ax.barh(positions + offset, values, height=0.28, color=color, label=legend)
-            for y, value in zip(positions + offset, values):
-                ax.text(max(value, 1) + 0.04, y, f"{value:.2f}×", va="center", fontsize=11)
-            print(
-                f"{fmt.upper()} vs {legend[3:]}: geomean={geomean(speed):.4f}, range={min(speed):.4f}–{max(speed):.4f}"
-            )
+        speed = [float(r["flydsl_tflops"]) / float(r["aten_tflops"]) for r in subset]
+        values = np.r_[speed, geomean(speed)]
+        ax.barh(positions, values, height=0.54, color=[ORANGE] * len(speed) + [BLUE])
+        for y, value in zip(positions, values):
+            ax.text(max(value, 1) + 0.04, y, f"{value:.2f}×", va="center", fontsize=11)
+        print(f"{fmt.upper()} vs ATen: geomean={geomean(speed):.4f}, range={min(speed):.4f}–{max(speed):.4f}")
         ax.set_yticks(positions, labels + ["Geometric mean"], fontsize=11)
         ax.set_ylim(positions[-1] + 0.7, -0.8)
         style(ax, 3.2, [0, 1, 2, 3])
         ax.set_xlabel("FlyDSL speedup", labelpad=10)
-        ax.set_title(fmt.upper(), fontsize=15, fontweight="bold", loc="left", pad=38)
-        ax.legend(loc="lower left", bbox_to_anchor=(-0.025, 1.008), ncol=2, frameon=False, fontsize=11)
+        ax.set_title(fmt.upper(), fontsize=15, fontweight="bold", loc="left", pad=14)
         if ax is axes[0]:
             ax.get_yticklabels()[-1].set_fontweight("bold")
-    fig.text(0.04, 0.048, "Shape labels: M × N × K · dashed line = comparison baseline", fontsize=11)
-    fig.text(
-        0.04,
-        0.020,
-        "CK timing includes dynamic A-scale shuffling; one-time static B-scale preprocessing is excluded.",
-        fontsize=11,
-    )
+    fig.text(0.04, 0.025, "Shape labels: M × N × K · dashed line = ATen", fontsize=11)
     save(fig, "flydsl-mxfp-gemm-performance")
 
 
