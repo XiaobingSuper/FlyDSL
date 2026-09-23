@@ -8,12 +8,14 @@ not run a benchmark.
 
 ## Publication scope
 
-The September 21 performance revision is prepared for a PyTorch build containing
+The September 23 revision is prepared for a PyTorch build containing
 [MXFP scaled GEMM support, PR #196719](https://github.com/pytorch/pytorch/pull/196719).
 The article assumes that PR has landed, as requested for the publication draft;
 it was still open when reviewed. Support and usage were checked against commit
-`5e6d41391dee11b1bed27e6c08ea8ec7b5249a23`; the performance tables were
-refreshed from the benchmark comment last edited on September 20.
+`e297267ba4a23ee9e14d35d12145d7deb4d8fcd1`. The performance tables were
+refreshed from the benchmark comment last edited on September 20 and predate
+subsequent implementation changes; they should be rerun against the final
+revision before publication.
 
 The MXFP implementation and tests cover NN, NT, TN, and TT layouts, with
 layout-dependent alignment checks. Both formats require logical `K` to be a
@@ -33,7 +35,7 @@ compiled GEMM path has FlyDSL and autotuning enabled:
   for unsupported inputs.
 - TorchInductor selects the fastest measured eligible implementation. Dense and
   grouped GEMM can use enabled ATen, Triton, and FlyDSL candidates; MXFP scaled
-  GEMM compares FlyDSL with an ATen candidate.
+  GEMM benchmarks all eligible candidates, including ATen where supported.
 
 The diagram shows the public operations and selection policies. Compiler
 internals and caches are omitted to keep the overview focused on application
@@ -50,7 +52,7 @@ cases are removed based on performance.
 
 | Data | Cases | Published source | Measurement setup |
 | --- | ---: | --- | --- |
-| [dense_gemm.csv](dense_gemm.csv) | 15 | [Dense GEMM benchmark comment](https://github.com/pytorch/pytorch/pull/190903#issuecomment-5061510962) | BF16 NT on MI355X (`gfx950`); graph replay; median of four accuracy-checked runs; FlyDSL/Triton `EXHAUSTIVE`, ATen default |
+| [dense_gemm.csv](dense_gemm.csv) | 15 | [Dense GEMM benchmark comment](https://github.com/pytorch/pytorch/pull/190903#issuecomment-5061510962) | BF16 NT on MI355 (`gfx950`); graph replay; median of four accuracy-checked runs; FlyDSL/Triton `EXHAUSTIVE`, ATen default |
 | [mxfp_gemm.csv](mxfp_gemm.csv) | 34 | [MXFP8/MXFP4 benchmark comment](https://github.com/pytorch/pytorch/pull/196719#issuecomment-5632055416) | MI355X (`gfx950`); NT layout, 17 shapes per format; FlyDSL versus ATen |
 | [grouped_gemm.csv](grouped_gemm.csv) | 24 | [Grouped GEMM PR](https://github.com/pytorch/pytorch/pull/194032) | BF16 on `gfx950`; 14 uniform-group shapes, five K/N variants at `G=8, M=512`, and five ragged-M cases at `G=8, K=N=4096`; isolated process and fresh cache per backend/shape; steady-state TFLOP/s; output checked against eager |
 | [rmsnorm.csv](rmsnorm.csv) | 22 | [RMSNorm PR](https://github.com/pytorch/pytorch/pull/191447) | FP16/BF16/FP32 on MI355X; FlyDSL 0.3.0; GPU events, 10 warmup and 50 timed iterations; one run per case |
@@ -79,9 +81,16 @@ these throughput tables.
   MXFP8 and MXFP4 are each aggregated over all 17 shapes relative to ATen.
   Grouped GEMM is aggregated separately over 14 uniform-group, five K/N-variant,
   and five ragged-M cases. The article reports geometric means against ATen and
-  Triton separately; the chart shows every case against its faster baseline.
-  TopK is aggregated separately by K band and determinism setting, with 10
-  register cases and 6/6/6/5 radix cases.
+  Triton separately; across all 24 cases these are 1.9505x and 1.2000x,
+  respectively. The chart shows every case against its faster baseline.
+  TopK uses `M` for row count, `N` for row width, and `K` for selected elements;
+  it is aggregated separately by K band and determinism setting, with 10 register
+  cases and 6/6/6/5 radix cases.
+- TopK compares FlyDSL and ATen under the same
+  `torch.use_deterministic_algorithms` setting. The deterministic radix path
+  preserves finite-value tie order; the nondeterministic path uses atomic slot
+  allocation. The register path is reproducible but can order ties differently
+  from ATen.
 - Dense GEMM counts ratios in `[0.99, 1.01]` as ties. All 15 shapes remain in
   the chart and geometric mean, including the three ties and two losses.
 - RMSNorm shows all cases individually on a common scale, split into aligned
@@ -122,5 +131,5 @@ figures are used in the article.
 The older `flydsl-mxfp8-performance` assets are retained for reference but are not
 used in the publication article. They describe the earlier
 [scaled GEMM prototype](https://github.com/pytorch/pytorch/pull/193527).
-The current `flydsl-mxfp-gemm-performance` figure is generated from the 34
+The current `flydsl-mxfp-gemm-results` figure is generated from the 34
 measurements published on PR #196719.

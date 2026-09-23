@@ -727,7 +727,7 @@ L 667.869811 108.576
    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="36.288" y="40.645031" transform="rotate(-0 36.288 40.645031)">MXFP scaled GEMM: low-precision performance across shapes</text>
   </g>
   <g id="text_68">
-   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="36.288" y="62.686125" transform="rotate(-0 36.288 62.686125)">MI355X · NT layout · speedup over ATen · geometric means include all 17 shapes</text>
+   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="36.288" y="62.686125" transform="rotate(-0 36.288 62.686125)">MI355X · source updated Sep 20 · NT layout · speedup over ATen · 17 shapes per format</text>
   </g>
   <g id="text_69">
    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="36.288" y="730.08" transform="rotate(-0 36.288 730.08)">Shape labels: M × N × K · dashed line = ATen</text>

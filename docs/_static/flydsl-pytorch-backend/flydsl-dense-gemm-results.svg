@@ -366,13 +366,13 @@ L 580.471579 88.74
    </g>
   </g>
   <g id="text_38">
-   <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="35.857031" transform="rotate(-0 33.12 35.857031)">Dense GEMM: gains across BF16 matrix shapes</text>
+   <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="35.857031" transform="rotate(-0 33.12 35.857031)">Dense GEMM: performance across BF16 matrix shapes</text>
   </g>
   <g id="text_39">
    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="33.12" y="57.898125" transform="rotate(-0 33.12 57.898125)">NT layout · speedup over the faster ATen/Triton baseline at each shape</text>
   </g>
   <g id="text_40">
-   <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="594.864" transform="rotate(-0 33.12 594.864)">All 15 shapes shown · 10 wins / 3 ties / 2 losses (±1% tie band) · dashed line = baseline</text>
+   <text style="font-size: 10.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="594.864" transform="rotate(-0 33.12 594.864)">15 shapes · 10 wins / 3 ties / 2 losses (±1%) · orange = win · gray = tie/loss · blue = geometric mean · dashed = faster baseline</text>
   </g>
  </g>
  <defs>

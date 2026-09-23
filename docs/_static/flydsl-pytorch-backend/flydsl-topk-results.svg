@@ -264,10 +264,10 @@ L 350.018182 104.544
    <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="31.069031" transform="rotate(-0 33.12 31.069031)">TopK: speedups for register and radix-select kernels</text>
   </g>
   <g id="text_24">
-   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="33.12" y="53.110125" transform="rotate(-0 33.12 53.110125)">FP32 · geometric-mean speedup over ATen in the same determinism mode</text>
+   <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="33.12" y="53.110125" transform="rotate(-0 33.12 53.110125)">FP32 · geometric-mean speedup over ATen · same PyTorch deterministic-algorithms setting</text>
   </g>
   <g id="text_25">
-   <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="460.944" transform="rotate(-0 33.12 460.944)">All 33 reported shapes · register tie ordering can differ from ATen · dashed line = baseline</text>
+   <text style="font-size: 10.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="33.12" y="460.944" transform="rotate(-0 33.12 460.944)">33 shapes · determinism changes radix tie gathering; register tie order may differ from ATen · dashed = baseline</text>
   </g>
   <g id="legend_1">
    <g id="patch_13">

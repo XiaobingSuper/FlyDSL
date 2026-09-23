@@ -203,7 +203,7 @@ def dense_gemm():
     fig.subplots_adjust(left=0.28, right=0.92, top=0.855, bottom=0.12)
     title(
         fig,
-        "Dense GEMM: gains across BF16 matrix shapes",
+        "Dense GEMM: performance across BF16 matrix shapes",
         "NT layout · speedup over the faster ATen/Triton baseline at each shape",
     )
     ax.barh(positions, values, height=0.64, color=colors)
@@ -218,11 +218,12 @@ def dense_gemm():
     fig.text(
         0.04,
         0.028,
-        f"All 15 shapes shown · {wins} wins / {ties} ties / {losses} losses (±1% tie band) · dashed line = baseline",
-        fontsize=11,
+        f"15 shapes · {wins} wins / {ties} ties / {losses} losses (±1%) · "
+        "orange = win · gray = tie/loss · blue = geometric mean · dashed = faster baseline",
+        fontsize=10.5,
     )
     print(f"Dense: geomean vs faster baseline {geomean(speed):.4f}; {wins}/{ties}/{losses}")
-    save(fig, "flydsl-dense-gemm-performance")
+    save(fig, "flydsl-dense-gemm-results")
 
 
 def mxfp_gemm():
@@ -232,7 +233,7 @@ def mxfp_gemm():
     title(
         fig,
         "MXFP scaled GEMM: low-precision performance across shapes",
-        "MI355X · NT layout · speedup over ATen · geometric means include all 17 shapes",
+        "MI355X · source updated Sep 20 · NT layout · speedup over ATen · 17 shapes per format",
     )
     for ax, fmt in zip(axes, ["mxfp8", "mxfp4"]):
         subset = [r for r in data if r["format"] == fmt]
@@ -252,24 +253,25 @@ def mxfp_gemm():
         if ax is axes[0]:
             ax.get_yticklabels()[-1].set_fontweight("bold")
     fig.text(0.04, 0.025, "Shape labels: M × N × K · dashed line = ATen", fontsize=11)
-    save(fig, "flydsl-mxfp-gemm-performance")
+    save(fig, "flydsl-mxfp-gemm-results")
 
 
 def grouped_gemm():
     data = rows("grouped_gemm.csv")
     suites = ["standard", "kn_variants", "ragged_m"]
     headings = [
-        "Uniform groups · shape labels are G × M × K × N",
-        "Projection dimensions · G = 8, M = 512 per group",
-        "Ragged expert loads · G = 8, K = N = 4096; labels list M per group",
+        "Uniform groups\nG × M × K × N",
+        "Projection dimensions\nG = 8, M = 512 per group",
+        "Ragged expert loads\nG = 8, K = N = 4096 · labels list M",
     ]
-    fig, axes = plt.subplots(
-        3,
-        1,
-        figsize=(12.6, 17.5),
-        gridspec_kw={"height_ratios": [15, 6, 6]},
-    )
-    fig.subplots_adjust(left=0.31, right=0.95, top=0.90, bottom=0.06, hspace=0.42)
+    fig = plt.figure(figsize=(13.6, 10.6))
+    grid = fig.add_gridspec(2, 2, width_ratios=[1.1, 1], hspace=0.55, wspace=0.82)
+    axes = [
+        fig.add_subplot(grid[:, 0]),
+        fig.add_subplot(grid[0, 1]),
+        fig.add_subplot(grid[1, 1]),
+    ]
+    fig.subplots_adjust(left=0.14, right=0.97, top=0.83, bottom=0.10)
     title(
         fig,
         "Grouped GEMM: per-case performance across MoE workloads",
@@ -281,7 +283,7 @@ def grouped_gemm():
             return " × ".join(case.removeprefix("g").split("x"))
         if suite == "kn_variants":
             return case.replace(" x ", " × ")
-        return case.replace(",", ", ")
+        return case
 
     for ax, suite, heading in zip(axes, suites, headings):
         subset = [r for r in data if r["suite"] == suite]
@@ -292,7 +294,7 @@ def grouped_gemm():
         labels = [case_label(suite, r["case"]) for r in subset] + ["Geometric mean"]
 
         ax.barh(positions, values, height=0.58, color=colors)
-        ax.set_yticks(positions, labels, fontsize=9.5 if suite == "ragged_m" else 10.5)
+        ax.set_yticks(positions, labels, fontsize=8.5 if suite == "ragged_m" else 9.5)
         ax.set_ylim(positions[-1] + 0.7, -0.8)
         style(ax, 1.55, [0, 0.5, 1, 1.5])
         ax.set_xlabel("FlyDSL speedup", labelpad=8)
@@ -312,7 +314,7 @@ def grouped_gemm():
         "Orange = FlyDSL win · gray = tie/loss (±1% tie band) · blue = geometric mean · dashed line = faster baseline",
         fontsize=11,
     )
-    save(fig, "flydsl-grouped-gemm-cases-performance")
+    save(fig, "flydsl-grouped-gemm-workloads-performance")
 
 
 def rmsnorm():
@@ -339,9 +341,12 @@ def rmsnorm():
             ax.text(value + 0.065, y, f"{value:.2f}×", va="center", fontsize=10.5)
         print(f"RMSNorm {heading}: {min(values):.4f}–{max(values):.4f}")
     fig.text(
-        0.04, 0.030, "Labels: dtype and M × N · each case is one warm timing run · dashed line = ATen", fontsize=11
+        0.04,
+        0.030,
+        "Labels: dtype and M × N · one run per case, with 10 warmup + 50 timed iterations · dashed = ATen",
+        fontsize=10.5,
     )
-    save(fig, "flydsl-rmsnorm-performance")
+    save(fig, "flydsl-rmsnorm-results")
 
 
 def topk():
@@ -359,7 +364,7 @@ def topk():
     title(
         fig,
         "TopK: speedups for register and radix-select kernels",
-        "FP32 · geometric-mean speedup over ATen in the same determinism mode",
+        "FP32 · geometric-mean speedup over ATen · same PyTorch deterministic-algorithms setting",
     )
     y = np.arange(len(bands))
     handles = []
@@ -384,10 +389,10 @@ def topk():
     fig.text(
         0.04,
         0.030,
-        "All 33 reported shapes · register tie ordering can differ from ATen · dashed line = baseline",
-        fontsize=11,
+        "33 shapes · determinism changes radix tie gathering; register tie order may differ from ATen · dashed = baseline",
+        fontsize=10.5,
     )
-    save(fig, "flydsl-topk-performance")
+    save(fig, "flydsl-topk-results")
 
 
 if __name__ == "__main__":

@@ -568,7 +568,7 @@ L 681.379942 127.008
    <text style="font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #526477" x="36.288" y="57.646125" transform="rotate(-0 36.288 57.646125)">FP16 / BF16 / FP32 · speedup over ATen · all 22 reported cases</text>
   </g>
   <g id="text_61">
-   <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="36.288" y="586.656" transform="rotate(-0 36.288 586.656)">Labels: dtype and M × N · each case is one warm timing run · dashed line = ATen</text>
+   <text style="font-size: 10.5px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #243447" x="36.288" y="586.656" transform="rotate(-0 36.288 586.656)">Labels: dtype and M × N · one run per case, with 10 warmup + 50 timed iterations · dashed = ATen</text>
   </g>
  </g>
  <defs>
