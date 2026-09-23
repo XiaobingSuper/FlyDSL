@@ -258,39 +258,58 @@ def mxfp_gemm():
 def grouped_gemm():
     data = rows("grouped_gemm.csv")
     suites = ["standard", "kn_variants", "ragged_m"]
-    labels = ["Standard suite\n14 shapes", "K/N variants\n5 shapes", "Ragged M\n5 shapes"]
-    fig, ax = plt.subplots(figsize=(11.5, 5.5))
-    fig.subplots_adjust(left=0.20, right=0.93, top=0.76, bottom=0.19)
+    headings = [
+        "Uniform groups · shape labels are G × M × K × N",
+        "Projection dimensions · G = 8, M = 512 per group",
+        "Ragged expert loads · G = 8, K = N = 4096; labels list M per group",
+    ]
+    fig, axes = plt.subplots(
+        3,
+        1,
+        figsize=(12.6, 17.5),
+        gridspec_kw={"height_ratios": [15, 6, 6]},
+    )
+    fig.subplots_adjust(left=0.31, right=0.95, top=0.90, bottom=0.06, hspace=0.42)
     title(
         fig,
-        "Grouped GEMM: throughput across MoE workload suites",
-        "BF16 · geometric-mean speedup over each baseline · all cases in each suite",
+        "Grouped GEMM: per-case performance across MoE workloads",
+        "BF16 · speedup over the faster ATen/Triton baseline at each case · all 24 cases",
     )
-    y = np.arange(len(suites))
-    for baseline, color, offset, label in [("triton", BLUE, -0.18, "vs Triton"), ("aten", ORANGE, 0.18, "vs ATen")]:
-        values = [
-            geomean([float(r["flydsl_tflops"]) / float(r[f"{baseline}_tflops"]) for r in data if r["suite"] == suite])
-            for suite in suites
-        ]
-        ax.barh(y + offset, values, height=0.30, color=color, label=label)
-        for yy, value in zip(y + offset, values):
-            ax.text(value + 0.035, yy, f"{value:.2f}×", va="center", fontsize=12)
-        print(f"Grouped vs {baseline}: " + ", ".join(f"{s}={v:.4f}" for s, v in zip(suites, values)))
-    ax.set_yticks(y, labels)
-    ax.invert_yaxis()
-    style(ax, 2.5, [0, 0.5, 1, 1.5, 2, 2.5])
-    ax.set_xlabel("FlyDSL geometric-mean speedup", labelpad=10)
-    fig.legend(
-        handles=[Patch(color=BLUE, label="vs Triton"), Patch(color=ORANGE, label="vs ATen")],
-        loc="upper right",
-        bbox_to_anchor=(0.94, 0.845),
-        ncol=2,
-        frameon=False,
-    )
+
+    def case_label(suite, case):
+        if suite == "standard":
+            return " × ".join(case.removeprefix("g").split("x"))
+        if suite == "kn_variants":
+            return case.replace(" x ", " × ")
+        return case.replace(",", ", ")
+
+    for ax, suite, heading in zip(axes, suites, headings):
+        subset = [r for r in data if r["suite"] == suite]
+        speed = [float(r["flydsl_tflops"]) / max(float(r["triton_tflops"]), float(r["aten_tflops"])) for r in subset]
+        positions = np.r_[np.arange(len(subset)), len(subset) + 0.65]
+        values = np.r_[speed, geomean(speed)]
+        colors = [ORANGE if value > 1.01 else GRAY for value in speed] + [BLUE]
+        labels = [case_label(suite, r["case"]) for r in subset] + ["Geometric mean"]
+
+        ax.barh(positions, values, height=0.58, color=colors)
+        ax.set_yticks(positions, labels, fontsize=9.5 if suite == "ragged_m" else 10.5)
+        ax.set_ylim(positions[-1] + 0.7, -0.8)
+        style(ax, 1.55, [0, 0.5, 1, 1.5])
+        ax.set_xlabel("FlyDSL speedup", labelpad=8)
+        ax.set_title(heading, fontsize=13, fontweight="bold", loc="left", pad=12)
+        ax.get_yticklabels()[-1].set_fontweight("bold")
+        for y, value in zip(positions, values):
+            ax.text(max(value, 1) + 0.025, y, f"{value:.2f}×", va="center", fontsize=10)
+
+        wins = sum(value > 1.01 for value in speed)
+        ties = sum(0.99 <= value <= 1.01 for value in speed)
+        losses = len(speed) - wins - ties
+        print(f"Grouped {suite} vs faster baseline: geomean={geomean(speed):.4f}; {wins}/{ties}/{losses}")
+
     fig.text(
         0.04,
-        0.035,
-        "The standard suite includes three cases where another backend is faster · dashed line = baseline",
+        0.022,
+        "Orange = FlyDSL win · gray = tie/loss (±1% tie band) · blue = geometric mean · dashed line = faster baseline",
         fontsize=11,
     )
     save(fig, "flydsl-grouped-gemm-performance")

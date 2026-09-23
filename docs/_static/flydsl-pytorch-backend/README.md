@@ -52,7 +52,7 @@ cases are removed based on performance.
 | --- | ---: | --- | --- |
 | [dense_gemm.csv](dense_gemm.csv) | 15 | [Dense GEMM benchmark comment](https://github.com/pytorch/pytorch/pull/190903#issuecomment-5061510962) | BF16 NT on MI355X (`gfx950`); graph replay; median of four accuracy-checked runs; FlyDSL/Triton `EXHAUSTIVE`, ATen default |
 | [mxfp_gemm.csv](mxfp_gemm.csv) | 34 | [MXFP8/MXFP4 benchmark comment](https://github.com/pytorch/pytorch/pull/196719#issuecomment-5632055416) | MI355X (`gfx950`); NT layout, 17 shapes per format; FlyDSL versus ATen |
-| [grouped_gemm.csv](grouped_gemm.csv) | 24 | [Grouped GEMM PR](https://github.com/pytorch/pytorch/pull/194032) | BF16 on `gfx950`; isolated process and fresh cache per backend/shape; steady-state TFLOP/s; output checked against eager |
+| [grouped_gemm.csv](grouped_gemm.csv) | 24 | [Grouped GEMM PR](https://github.com/pytorch/pytorch/pull/194032) | BF16 on `gfx950`; 14 uniform-group shapes, five K/N variants at `G=8, M=512`, and five ragged-M cases at `G=8, K=N=4096`; isolated process and fresh cache per backend/shape; steady-state TFLOP/s; output checked against eager |
 | [rmsnorm.csv](rmsnorm.csv) | 22 | [RMSNorm PR](https://github.com/pytorch/pytorch/pull/191447) | FP16/BF16/FP32 on MI355X; FlyDSL 0.3.0; GPU events, 10 warmup and 50 timed iterations; one run per case |
 | [topk.csv](topk.csv) | 33 | [TopK PR](https://github.com/pytorch/pytorch/pull/193548) | FP32 on MI355X; GPU events, 20 warmup and 100 timed iterations; median of three runs for each determinism setting |
 
@@ -77,9 +77,11 @@ these throughput tables.
   `flydsl_tflops / max(aten_tflops, triton_tflops)`.
 - A geometric mean is `exp(mean(log(speedup)))`, with equal weight per case.
   MXFP8 and MXFP4 are each aggregated over all 17 shapes relative to ATen.
-  Grouped GEMM is aggregated separately over 14 reported, five K/N-variant, and
-  five ragged-M cases. TopK is aggregated separately by K band and determinism
-  setting, with 10 register cases and 6/6/6/5 radix cases.
+  Grouped GEMM is aggregated separately over 14 uniform-group, five K/N-variant,
+  and five ragged-M cases. The article reports geometric means against ATen and
+  Triton separately; the chart shows every case against its faster baseline.
+  TopK is aggregated separately by K band and determinism setting, with 10
+  register cases and 6/6/6/5 radix cases.
 - Dense GEMM counts ratios in `[0.99, 1.01]` as ties. All 15 shapes remain in
   the chart and geometric mean, including the three ties and two losses.
 - RMSNorm shows all cases individually on a common scale, split into aligned

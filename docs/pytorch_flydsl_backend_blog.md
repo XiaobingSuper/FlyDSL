@@ -166,18 +166,33 @@ naturally skipping empty groups. An 8-XCD-aware swizzle, with an N-major
 fallback, keeps concurrent workgroups on reusable B tiles; HTI configurations
 remain available to autotuning.
 
-On the reported 14-shape BF16 suite, FlyDSL achieves a **1.21x geometric-mean
-speedup over Triton** and **2.12x over ATen**. It is the fastest measured backend
-in **11 of 14 cases**, and in all five separately measured ragged-`M` cases.
+The 24 reported cases are divided by the workload dimension being tested. In a
+uniform shape `G × M × K × N`, `G` is the number of experts, `M` is the token
+count per expert, and `K` and `N` are the reduction and output dimensions:
 
-![Grouped GEMM geometric-mean speedup across standard, K/N-variant, and ragged-M suites](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
+- **Uniform groups (14 cases):** all experts use the same `M`, while
+  `G`, `M`, `K`, and `N` vary across common grouped-GEMM shapes.
+- **Projection dimensions (five cases):** `G = 8` and `M = 512` are fixed while
+  `K` and `N` cover MoE up/down projections and a small-`N` case.
+- **Ragged expert loads (five cases):** `G = 8` and `K = N = 4096` are fixed,
+  while each label lists the eight per-expert `M` values, including empty and
+  highly imbalanced experts.
 
-*Figure 4. BF16 grouped GEMM on gfx950. Each pair of bars summarizes a complete
-suite: 14 standard shapes, five K/N variants, or five ragged-M cases.*
+For uniform groups, FlyDSL reaches **1.21x geometric-mean speedup over Triton**
+and **2.12x over ATen**, and is the fastest backend in **11 of 14 cases**. The
+projection-dimension cases average **1.23x over Triton** and **1.73x over ATen**;
+the ragged cases average **1.15x** and **1.73x**, respectively, and FlyDSL wins
+all five.
 
-The ragged cases include imbalanced token counts and empty groups, making them
-particularly relevant to expert workloads. Gains vary by shape: the K/N sweep
-also includes a small-`N` case where Triton is faster.
+![Grouped GEMM per-case speedup across uniform-group, projection-dimension, and ragged-expert workloads](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
+
+*Figure 4. All 24 BF16 grouped-GEMM cases on gfx950, split into three panels.
+Each bar compares FlyDSL with the faster ATen/Triton result for that case; each
+panel ends with its geometric mean.*
+
+The per-case view makes the shape sensitivity explicit: the projection sweep
+contains a small-`N` case where Triton is faster and a wide-`N` case tied with
+ATen, while all five ragged expert-load cases favor FlyDSL.
 
 ### RMSNorm: Gains Across Hidden Dimensions
 
@@ -348,16 +363,12 @@ layout.
 
 The next steps extend the range of workloads that can benefit from FlyDSL:
 
-- **More low-precision workloads and attention:** work on
-  [MXFP8 grouped GEMM](https://github.com/pytorch/pytorch/pull/194303) and
-  [FlexAttention](https://github.com/pytorch/pytorch/pull/194309) targets more
-  inference workloads.
-- **Fusion and training:** [GEMM epilogue fusion](https://github.com/pytorch/pytorch/pull/196277)
-  aims to combine matrix multiplication with following pointwise operations;
-  broader backward coverage would extend training support.
-- **Deployment:** [AOTInductor support](https://github.com/pytorch/pytorch/pull/196805)
-  aims to package kernels ahead of execution. End-to-end model benchmarks will
-  help quantify how operator gains translate to application performance.
+- **More low-precision workloads and attention:** add MXFP8 grouped GEMM and
+  FlexAttention kernels for more inference workloads.
+- **Fusion and training:** support GEMM epilogue fusion and broader backward
+  coverage.
+- **Deployment and validation:** add AOTInductor support and expand end-to-end
+  model benchmarks.
 
 These extensions are in progress and are outside the current support and
 performance results presented here.
