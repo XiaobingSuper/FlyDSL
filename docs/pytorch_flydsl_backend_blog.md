@@ -184,7 +184,7 @@ projection-dimension cases average **1.23x over Triton** and **1.73x over ATen**
 the ragged cases average **1.15x** and **1.73x**, respectively, and FlyDSL wins
 all five.
 
-![Grouped GEMM per-case speedup across uniform-group, projection-dimension, and ragged-expert workloads](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-performance.png)
+![Grouped GEMM per-case speedup across uniform-group, projection-dimension, and ragged-expert workloads](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-cases-performance.png)
 
 *Figure 4. All 24 BF16 grouped-GEMM cases on gfx950, split into three panels.
 Each bar compares FlyDSL with the faster ATen/Triton result for that case; each

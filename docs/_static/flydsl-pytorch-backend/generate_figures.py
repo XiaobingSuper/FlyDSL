@@ -312,7 +312,7 @@ def grouped_gemm():
         "Orange = FlyDSL win · gray = tie/loss (±1% tie band) · blue = geometric mean · dashed line = faster baseline",
         fontsize=11,
     )
-    save(fig, "flydsl-grouped-gemm-performance")
+    save(fig, "flydsl-grouped-gemm-cases-performance")
 
 
 def rmsnorm():
