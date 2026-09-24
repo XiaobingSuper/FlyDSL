@@ -8,11 +8,10 @@ available as an optional PyTorch backend through existing operator APIs.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for dense GEMM over the faster ATen/Triton baseline**,
-**1.58x and 1.68x over ATen for MXFP8 and MXFP4**, **1.21x over Triton for
-the uniform-group GEMM suite**, and **4.82x for small-K TopK over ATen** with
-deterministic algorithms disabled. Across all 24 grouped-GEMM cases, the
-geometric-mean speedup over Triton is **1.20x**. These gains are most relevant
-when the supported operations account for a significant share of model runtime.
+**1.58x and 1.68x over ATen for MXFP8 and MXFP4**, **1.20x over Triton across
+all 24 grouped-GEMM cases**, and **4.82x for small-K TopK over ATen** with
+deterministic algorithms disabled. These gains are most relevant when the
+supported operations account for a significant share of model runtime.
 In end-to-end vLLM A/B tests, whole-request speedup reaches **12.9% for BF16**
 and **104.2% for MXFP8**, with the result depending on model and concurrency.
 
@@ -42,18 +41,32 @@ enabled for GEMM autotuning. Eager execution dispatches by input support;
 TorchInductor selects by measured performance, with candidates depending on the
 operation. Both paths use PyTorch operator APIs.*
 
+## Kernel Scheduling at a Glance
+
+The kernels use different scheduling strategies rather than one generic
+template. The overview below highlights how each path divides work and moves
+data before the detailed performance results.
+
+![Four FlyDSL scheduling strategies: half-tile-interleaved dense and MXFP GEMM, persistent grouped GEMM, fused RMSNorm reduction, and register or radix-select TopK.](_static/flydsl-pytorch-backend/flydsl-kernel-scheduling.png)
+
+*Figure 2. FlyDSL kernel scheduling. (A) A large-shape Dense/MXFP HTI example
+interleaves staged loads with MFMA across four resident output quadrants.
+(B) Grouped GEMM assigns one persistent tile stream across experts. (C) RMSNorm
+combines Wave64 partials before applying `rstd` and weight. (D) TopK uses
+register merging for small K and radix thresholding for larger K.*
+
 ## Supported Features
 
 Current support targets AMD MI350-series GPUs with the `gfx950` architecture.
 The following features are available in PyTorch:
 
-| Operation | Execution mode | Data types | Supported scope |
-| --- | --- | --- | --- |
-| Dense GEMM | `torch.compile` | FP16, BF16 | Static 2D `torch.mm`; NN, NT, TN, and TT input layouts |
-| MXFP scaled GEMM | `torch.compile` | MXFP8, MXFP4 | Static 2D `F.scaled_mm`; NN, NT, TN, and TT input layouts; block scales; FP16/BF16 output |
-| Grouped GEMM | `torch.compile` | FP16, BF16 | Static-shape `F.grouped_mm` with ragged 2D activations and contiguous 3D weights; uneven and empty groups |
-| RMSNorm | Eager | FP16, BF16, FP32 | Forward with contiguous input and explicit weight; one normalized dimension; tuned shape regions |
-| TopK | Eager | FP32 | Contiguous input; last-dimension selection with `largest=True` and `sorted=True`; functional and `out=` variants in tuned shape regions |
+| Operation | Mode | PyTorch API | Input dtype | Layout / shape | Output / options |
+| --- | --- | --- | --- | --- | --- |
+| Dense GEMM | Compile | `torch.mm` | FP16, BF16 | Static 2D; NN/NT/TN/TT | Same dtype |
+| MXFP scaled GEMM | Compile | `F.scaled_mm` | MXFP8, MXFP4 | Static 2D; NN/NT/TN/TT | FP16/BF16; block scales |
+| Grouped GEMM | Compile | `F.grouped_mm` | FP16, BF16 | Ragged 2D A; grouped 3D B | Uneven/empty groups |
+| RMSNorm | Eager | `F.rms_norm` | FP16, BF16, FP32 | Contiguous; 1-D norm shape | Forward |
+| TopK | Eager | `torch.topk` | FP32 | Contiguous; last dimension | Largest, sorted; functional/`out=` |
 
 Dense GEMM's [four-layout support](https://github.com/pytorch/pytorch/pull/194981)
 accepts row-major and column-major inputs, including eligible transpose views.
@@ -108,7 +121,7 @@ eight-wave workgroup (Wave64, 512 threads total)—two waves along M and four
 along N. Its half-tile interleaved (HTI) schedule keeps four output quadrants in
 registers while interleaving two K tiles of global-to-local-data-share (LDS)
 loads with matrix fused multiply-add (MFMA) computation. Smaller shapes can
-autotune among narrower full-tile and HTI configurations.
+autotune among narrower full-tile and HTI configurations (Figure 2A).
 
 Across 15 BF16 NT shapes, FlyDSL delivers a **1.10x geometric-mean speedup over
 the faster ATen/Triton baseline at each shape**. Gains are strongest in smaller
@@ -117,7 +130,7 @@ by **1.33x**.
 
 ![FlyDSL dense GEMM speedup for all 15 BF16 NT shapes](_static/flydsl-pytorch-backend/flydsl-dense-gemm-results.png)
 
-*Figure 2. BF16 NT GEMM on MI355, relative to the faster ATen/Triton baseline at
+*Figure 3. BF16 NT GEMM on MI355, relative to the faster ATen/Triton baseline at
 each shape. All 15 cases are shown: 10 wins, three ties, and two losses using a
 ±1% tie band.*
 
@@ -142,7 +155,7 @@ The scaled-GEMM kernel feeds packed MXFP8/MXFP4 operands and E8M0 block scales
 directly into CDNA4 scaled MFMA instructions, avoiding full-precision operand
 materialization. Scales are staged through LDS alongside A and B; the HTI path
 derives its scale-chunk size from the tile and workgroup geometry and cycles
-those chunks through staged buffers.
+those chunks through staged buffers (Figure 2A).
 
 In the published September 20 measurements on MI355X, the 17-shape NT suite
 shows a **1.58x geometric-mean speedup for MXFP8 over ATen** and a **1.68x
@@ -150,7 +163,7 @@ speedup for MXFP4 over ATen**.
 
 ![MXFP8 and MXFP4 scaled GEMM speedups over ATen for all 17 shapes per format.](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-results.png)
 
-*Figure 3. NT scaled GEMM on MI355X. Each panel shows all 17 cases and their
+*Figure 4. NT scaled GEMM on MI355X. Each panel shows all 17 cases and their
 geometric mean relative to ATen.*
 
 FlyDSL exceeds ATen throughput in every reported case for both formats.
@@ -172,7 +185,7 @@ workgroup a strided sequence of tiles across the cumulative group offsets,
 naturally skipping empty groups. A compute-die-aware swizzle distributes work
 across the GPU's eight Accelerator Complex Dies (XCDs), with an N-major fallback
 that keeps concurrent workgroups on reusable B tiles; HTI configurations remain
-available to autotuning.
+available to autotuning (Figure 2B).
 
 The 24 reported cases are divided by the workload dimension being tested. In a
 uniform shape `G × M × K × N`, `G` is the number of experts, `M` is the token
@@ -186,15 +199,15 @@ count per expert, and `K` and `N` are the reduction and output dimensions:
   while each label lists the eight per-expert `M` values, including empty and
   highly imbalanced experts.
 
-For uniform groups, FlyDSL reaches **1.21x geometric-mean speedup over Triton**
-and **2.12x over ATen**, and is the fastest backend in **11 of 14 cases**. The
-projection-dimension cases have geometric means of **1.23x over Triton** and
-**1.73x over ATen**; the ragged cases reach **1.15x** and **1.73x**,
-respectively, and FlyDSL wins all five.
+Across all 24 cases, FlyDSL reaches **1.20x geometric-mean speedup over Triton**
+and **1.95x over ATen**. Uniform groups reach **1.21x** and **2.12x**,
+respectively, with FlyDSL the fastest backend in **11 of 14 cases**. The
+projection-dimension cases reach **1.23x** and **1.73x**; the ragged cases reach
+**1.15x** and **1.73x**, and FlyDSL wins all five.
 
 ![Grouped GEMM per-case speedup across uniform-group, projection-dimension, and ragged-expert workloads](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-workloads-performance.png)
 
-*Figure 4. All 24 BF16 grouped-GEMM cases on gfx950, split into three panels.
+*Figure 5. All 24 BF16 grouped-GEMM cases on gfx950, split into three panels.
 Each bar compares FlyDSL with the faster ATen/Triton result for that case; each
 panel ends with its geometric mean.*
 
@@ -212,7 +225,7 @@ The kernel assigns one thread block (CTA) to each row, uses 128-bit vector loads
 and keeps the loaded input in registers. FP32 sum-of-squares first reduces within
 each Wave64 using shuffle operations, then combines wave partials through a small
 LDS buffer; the resident values are reused to apply `rsqrt` and the weight and to
-return the `rstd` needed by backward.
+return the `rstd` needed by backward (Figure 2C).
 
 For the measured aligned hidden dimensions, speedups over ATen are approximately
 **1.2x–1.5x**. Dimensions one element above an aligned size—for example, `4097`
@@ -220,7 +233,7 @@ rather than `4096`—show larger gains, reaching **3.66x**.
 
 ![RMSNorm speedups for aligned and off-by-one hidden dimensions](_static/flydsl-pytorch-backend/flydsl-rmsnorm-results.png)
 
-*Figure 5. All 22 reported RMSNorm cases on MI355X. Labels identify dtype and
+*Figure 6. All 22 reported RMSNorm cases on MI355X. Labels identify dtype and
 M × N, where M is the row count and N the normalized dimension. Both panels use
 the same speedup scale.*
 
@@ -237,7 +250,7 @@ For small fixed K, one Wave64 per row performs lane-local bitonic sorting and a
 butterfly top-K merge entirely in registers, writing only the final K pairs.
 For larger K, four 8-bit radix passes find the K-th threshold, gather only the
 surviving candidates, and bitonic-sort a buffer rounded from K to the next power
-of two instead of sorting the full row.
+of two instead of sorting the full row (Figure 2D).
 
 Here, “determinism on” means `torch.use_deterministic_algorithms(True)`. The
 radix path then uses prefix-sum slots to preserve finite-value tie order; with
@@ -252,7 +265,7 @@ from **1.40x to 1.97x**.
 
 ![TopK geometric-mean speedup by K band and determinism setting](_static/flydsl-pytorch-backend/flydsl-topk-results.png)
 
-*Figure 6. FP32 TopK on MI355X, compared with ATen under the same determinism
+*Figure 7. FP32 TopK on MI355X, compared with ATen under the same determinism
 setting. The bars aggregate all 33 reported cases by kernel family and K band.*
 
 The small-K register path shows the largest average gain. The radix-select paths
@@ -311,7 +324,7 @@ Llama-3.1-8B, and **37.7% to 104.2%** for Llama-3.3-70B. The largest result,
 
 ![BF16 and MXFP8 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-e2e-results.png)
 
-*Figure 7. vLLM whole-request speedup on one MI355X. BF16 compares
+*Figure 8. vLLM whole-request speedup on one MI355X. BF16 compares
 ATen/Triton with ATen/Triton/FlyDSL; MXFP8 compares ATen with ATen/FlyDSL.
 The panels use independent horizontal scales, and positive values favor FlyDSL.*
 

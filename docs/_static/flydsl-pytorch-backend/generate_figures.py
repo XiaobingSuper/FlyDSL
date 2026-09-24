@@ -190,6 +190,127 @@ def architecture():
     save(fig, "flydsl-pytorch-architecture")
 
 
+def kernel_scheduling():
+    fig, axes = plt.subplots(2, 2, figsize=(13.6, 9.6))
+    fig.subplots_adjust(left=0.04, right=0.98, top=0.87, bottom=0.05, hspace=0.24, wspace=0.12)
+    title(
+        fig,
+        "Kernel scheduling at a glance",
+        "The supported operators use different work partitioning, data movement, and selection strategies",
+    )
+
+    def prepare(ax, heading):
+        ax.set(xlim=(0, 100), ylim=(0, 100))
+        ax.set_facecolor("#F6F8FB")
+        ax.axis("off")
+        ax.text(3, 94, heading, fontsize=14, fontweight="bold", va="top")
+
+    def box(ax, x, y, width, height, text, fill="white", edge="#CBD5DF", size=10, bold=False):
+        ax.add_patch(
+            FancyBboxPatch(
+                (x, y),
+                width,
+                height,
+                boxstyle="round,pad=0,rounding_size=1.2",
+                linewidth=1.1,
+                edgecolor=edge,
+                facecolor=fill,
+            )
+        )
+        ax.text(
+            x + width / 2,
+            y + height / 2,
+            text,
+            ha="center",
+            va="center",
+            fontsize=size,
+            fontweight="bold" if bold else "normal",
+        )
+
+    def arrow(ax, start, end):
+        ax.add_patch(
+            FancyArrowPatch(
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=12,
+                linewidth=1.2,
+                color="#7D8E9E",
+                shrinkA=1,
+                shrinkB=1,
+            )
+        )
+
+    dense, grouped, rms, topk_ax = axes.flat
+
+    prepare(dense, "A · Dense / MXFP HTI example")
+    dense.text(3, 84, "Large shape · 256 × 256 tile · 8 Wave64 (2M × 4N)", fontsize=10.5)
+    box(dense, 3, 64, 24, 14, "Global A / B\n+ MXFP scales", fill="#EDF3F8", edge=BLUE)
+    box(dense, 38, 64, 24, 14, "Two staged\nLDS K tiles", fill="#FFF7E8", edge="#D9A441")
+    box(dense, 73, 64, 24, 14, "Wave64\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
+    arrow(dense, (27, 71), (38, 71))
+    arrow(dense, (62, 71), (73, 71))
+    dense.text(3, 52, "HTI keeps four output quadrants resident", fontsize=10.5, fontweight="bold")
+    for x, y, label in [(35, 28, "C00"), (53, 28, "C01"), (35, 12, "C10"), (53, 12, "C11")]:
+        box(dense, x, y, 15, 12, label, fill="#FDE2DA", edge=ORANGE, bold=True)
+    arrow(dense, (85, 64), (67, 45))
+    dense.text(3, 4, "Prefetch the next K tiles while MFMA consumes the current pair.", fontsize=10)
+
+    prepare(grouped, "B · Grouped GEMM")
+    grouped.text(3, 84, "Expert row ranges from cumulative offsets", fontsize=10.5)
+    for x, label, fill, edge in [
+        (3, "E0\nM₀", "#EDF3F8", BLUE),
+        (27, "E1\nM₁", "#EDF3F8", BLUE),
+        (51, "E2\nM₂ = 0", "#E9EDF1", GRAY),
+        (75, "E3\nM₃", "#EDF3F8", BLUE),
+    ]:
+        box(grouped, x, 66, 20, 14, label, fill=fill, edge=edge)
+    grouped.text(3, 54, "One global tile stream (empty experts contribute no tiles)", fontsize=10.5, fontweight="bold")
+    for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E1·0"), (51, "E1·1"), (67, "E3·0"), (83, "E3·1")]:
+        box(grouped, x, 40, 13, 10, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
+    arrow(grouped, (13, 66), (13, 51))
+    arrow(grouped, (37, 66), (42, 51))
+    arrow(grouped, (85, 66), (85, 51))
+    box(grouped, 5, 20, 27, 10, "WG0: 0 → 3 → 6", fill="white", edge="#CBD5DF")
+    box(grouped, 37, 20, 27, 10, "WG1: 1 → 4 → 7", fill="white", edge="#CBD5DF")
+    box(grouped, 69, 20, 27, 10, "WG2: 2 → 5 → 8", fill="white", edge="#CBD5DF")
+    grouped.text(3, 6, "Persistent workgroups stride across experts; XCD-aware swizzling balances tiles.", fontsize=10)
+
+    prepare(rms, "C · RMSNorm")
+    box(rms, 3, 68, 23, 13, "One input row", fill="#EDF3F8", edge=BLUE, bold=True)
+    box(rms, 38, 68, 25, 13, "128-bit loads\nregister values", fill="white", edge="#CBD5DF")
+    box(rms, 74, 68, 23, 13, "Apply rstd\n× weight", fill="#FFF0EB", edge=ORANGE)
+    arrow(rms, (26, 74.5), (38, 74.5))
+    arrow(rms, (63, 74.5), (74, 74.5))
+    rms.text(3, 55, "Wave64 partial sum-of-squares", fontsize=10.5, fontweight="bold")
+    for x, label in [(5, "W0"), (27, "W1"), (49, "W2"), (71, "W3")]:
+        box(rms, x, 39, 18, 11, label, fill="#E9E2F4", edge=PURPLE, bold=True)
+    box(rms, 18, 19, 28, 12, "LDS partials", fill="#FFF7E8", edge="#D9A441")
+    box(rms, 55, 19, 28, 12, "Wave 0 final reduce", fill="#E9E2F4", edge=PURPLE)
+    arrow(rms, (50, 39), (35, 31))
+    arrow(rms, (46, 25), (55, 25))
+    rms.text(3, 5, "One thread block per row; resident values produce output and backward rstd.", fontsize=10)
+
+    prepare(topk_ax, "D · TopK")
+    topk_ax.text(3, 83, "Small fixed K", fontsize=10.5, fontweight="bold")
+    box(topk_ax, 3, 64, 18, 13, "K = 2/4/8/16", fill="#EDF3F8", edge=BLUE)
+    box(topk_ax, 29, 64, 20, 13, "Lane-local\nbitonic sort", fill="white", edge="#CBD5DF")
+    box(topk_ax, 57, 64, 20, 13, "Butterfly\ntop-K merge", fill="#E9E2F4", edge=PURPLE)
+    box(topk_ax, 85, 64, 12, 13, "K pairs", fill="#FFF0EB", edge=ORANGE)
+    for start, end in [((21, 70.5), (29, 70.5)), ((49, 70.5), (57, 70.5)), ((77, 70.5), (85, 70.5))]:
+        arrow(topk_ax, start, end)
+    topk_ax.text(3, 49, "Larger K", fontsize=10.5, fontweight="bold")
+    box(topk_ax, 3, 29, 18, 13, "Full row", fill="#EDF3F8", edge=BLUE)
+    box(topk_ax, 29, 29, 20, 13, "Four radix\nbyte passes", fill="white", edge="#CBD5DF")
+    box(topk_ax, 57, 29, 20, 13, "Threshold\ncandidates", fill="#E9E2F4", edge=PURPLE)
+    box(topk_ax, 85, 29, 12, 13, "K pairs", fill="#FFF0EB", edge=ORANGE)
+    for start, end in [((21, 35.5), (29, 35.5)), ((49, 35.5), (57, 35.5)), ((77, 35.5), (85, 35.5))]:
+        arrow(topk_ax, start, end)
+    topk_ax.text(3, 6, "Deterministic: prefix-sum slots · Off: atomic slot allocation.", fontsize=10)
+
+    save(fig, "flydsl-kernel-scheduling")
+
+
 def dense_gemm():
     data = rows("dense_gemm.csv")
     speed = np.array(
@@ -470,6 +591,7 @@ def vllm_e2e():
 
 if __name__ == "__main__":
     architecture()
+    kernel_scheduling()
     dense_gemm()
     mxfp_gemm()
     grouped_gemm()
