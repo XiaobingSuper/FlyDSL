@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Patch, Rectangle
 
 ROOT = Path(__file__).resolve().parent
 ORANGE = "#E4492C"
@@ -241,40 +241,79 @@ def kernel_scheduling():
             )
         )
 
+    def grid_rect(ax, x, y, width, height, rows, cols, fill, edge=BLUE, linewidth=1.1):
+        ax.add_patch(Rectangle((x, y), width, height, facecolor=fill, edgecolor=edge, linewidth=linewidth))
+        for row in range(1, rows):
+            yy = y + height * row / rows
+            ax.plot([x, x + width], [yy, yy], color=edge, linewidth=0.65)
+        for col in range(1, cols):
+            xx = x + width * col / cols
+            ax.plot([xx, xx], [y, y + height], color=edge, linewidth=0.65)
+
     dense, grouped, rms, topk_ax = axes.flat
 
-    prepare(dense, "A · Dense / MXFP HTI example")
-    dense.text(3, 84, "Large shape · 256 × 256 tile · 8 Wave64 (2M × 4N)", fontsize=10.5)
-    box(dense, 3, 64, 24, 14, "Global A / B\n+ MXFP scales", fill="#EDF3F8", edge=BLUE)
-    box(dense, 38, 64, 24, 14, "Two staged\nLDS K tiles", fill="#FFF7E8", edge="#D9A441")
-    box(dense, 73, 64, 24, 14, "Wave64\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
-    arrow(dense, (27, 71), (38, 71))
-    arrow(dense, (62, 71), (73, 71))
-    dense.text(3, 52, "HTI keeps four output quadrants resident", fontsize=10.5, fontweight="bold")
-    for x, y, label in [(35, 28, "C00"), (53, 28, "C01"), (35, 12, "C10"), (53, 12, "C11")]:
-        box(dense, x, y, 15, 12, label, fill="#FDE2DA", edge=ORANGE, bold=True)
-    arrow(dense, (85, 64), (67, 45))
-    dense.text(3, 4, "Prefetch the next K tiles while MFMA consumes the current pair.", fontsize=10)
+    prepare(dense, "A · Dense / MXFP HTI tile mapping")
+    dense.text(3, 84, "A[BM, BK] × B[BK, BN] → C[BM, BN]", fontsize=11, fontweight="bold")
+    grid_rect(dense, 5, 38, 17, 38, 4, 2, "#DCEAF5")
+    grid_rect(dense, 33, 55, 28, 18, 2, 4, "#FFF0D3", edge="#D9A441")
+    grid_rect(dense, 70, 36, 27, 42, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.5)
+    dense.text(13.5, 79, "A tile", ha="center", fontsize=10, fontweight="bold")
+    dense.text(47, 76, "B tile", ha="center", fontsize=10, fontweight="bold")
+    dense.text(83.5, 81, "C tile · 256 × 256", ha="center", fontsize=10, fontweight="bold")
+    dense.text(2, 57, "BM", ha="right", va="center", fontsize=9.5)
+    dense.text(13.5, 33, "BK", ha="center", fontsize=9.5)
+    dense.text(30, 64, "BK", ha="right", va="center", fontsize=9.5)
+    dense.text(47, 50, "BN", ha="center", fontsize=9.5)
+    dense.text(67, 57, "BM", ha="right", va="center", fontsize=9.5)
+    dense.text(83.5, 31, "BN", ha="center", fontsize=9.5)
+    dense.text(27, 62, "×", fontsize=18, fontweight="bold", ha="center", va="center")
+    dense.text(65, 62, "→", fontsize=18, fontweight="bold", ha="center", va="center")
+    for row in range(1, 2):
+        yy = 57 + 21 * row / 2
+        dense.plot([70, 83.5], [yy, yy], color=PURPLE, linewidth=0.7)
+    for col in range(1, 4):
+        xx = 70 + 13.5 * col / 4
+        dense.plot([xx, xx], [57, 78], color=PURPLE, linewidth=0.7)
+    dense.text(76.75, 67.5, "C00\n2 × 4 waves", ha="center", va="center", fontsize=7.5, fontweight="bold")
+    dense.text(90.25, 67.5, "C01", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    dense.text(76.75, 46.5, "C10", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    dense.text(90.25, 46.5, "C11", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    box(dense, 5, 12, 37, 12, "K tile t / t+1\nstaged in LDS", fill="#FFF7E8", edge="#D9A441", size=9.5)
+    box(dense, 56, 12, 39, 12, "MFMA current pair\nprefetch next pair", fill="#FFF0EB", edge=ORANGE, size=9.5)
+    arrow(dense, (42, 18), (56, 18))
+    dense.text(3, 4, "HTI keeps C00–C11 resident; MXFP co-stages E8M0 block scales.", fontsize=10)
 
-    prepare(grouped, "B · Grouped GEMM")
-    grouped.text(3, 84, "Expert row ranges from cumulative offsets", fontsize=10.5)
-    for x, label, fill, edge in [
-        (3, "E0\nM₀", "#EDF3F8", BLUE),
-        (27, "E1\nM₁", "#EDF3F8", BLUE),
-        (51, "E2\nM₂ = 0", "#E9EDF1", GRAY),
-        (75, "E3\nM₃", "#EDF3F8", BLUE),
-    ]:
-        box(grouped, x, 66, 20, 14, label, fill=fill, edge=edge)
-    grouped.text(3, 54, "One global tile stream (empty experts contribute no tiles)", fontsize=10.5, fontweight="bold")
+    prepare(grouped, "B · Grouped GEMM persistent tiles")
+    grouped.text(3, 84, "Aᵍ[M_g, K] × Bᵍ[K, N] for each expert g", fontsize=11, fontweight="bold")
+    expert_specs = [
+        (5, 54, 17, 25, 4, "E0 · M₀"),
+        (29, 60, 17, 19, 3, "E1 · M₁"),
+        (53, 75, 17, 2, 1, "E2 · M₂=0"),
+        (77, 48, 17, 31, 5, "E3 · M₃"),
+    ]
+    for x, y, width, height, rows_count, label in expert_specs:
+        fill, edge = ("#E9EDF1", GRAY) if "M₂" in label else ("#DCEAF5", BLUE)
+        grid_rect(grouped, x, y, width, height, rows_count, 2, fill, edge=edge)
+        grouped.text(
+            x + width / 2,
+            y + height / 2,
+            label,
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+            bbox={"facecolor": fill, "edgecolor": "none", "pad": 1},
+        )
+    grouped.text(3, 42, "Flatten valid matrix tiles into one global stream", fontsize=10.5, fontweight="bold")
     for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E1·0"), (51, "E1·1"), (67, "E3·0"), (83, "E3·1")]:
-        box(grouped, x, 40, 13, 10, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
-    arrow(grouped, (13, 66), (13, 51))
-    arrow(grouped, (37, 66), (42, 51))
-    arrow(grouped, (85, 66), (85, 51))
-    box(grouped, 5, 20, 27, 10, "WG0: 0 → 3 → 6", fill="white", edge="#CBD5DF")
-    box(grouped, 37, 20, 27, 10, "WG1: 1 → 4 → 7", fill="white", edge="#CBD5DF")
-    box(grouped, 69, 20, 27, 10, "WG2: 2 → 5 → 8", fill="white", edge="#CBD5DF")
-    grouped.text(3, 6, "Persistent workgroups stride across experts; XCD-aware swizzling balances tiles.", fontsize=10)
+        box(grouped, x, 29, 13, 9, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
+    arrow(grouped, (13, 54), (10, 39))
+    arrow(grouped, (37, 60), (42, 39))
+    arrow(grouped, (85, 48), (88, 39))
+    box(grouped, 5, 12, 27, 9, "WG0: 0 → 3 → 6", fill="white", edge="#CBD5DF", size=9.5)
+    box(grouped, 37, 12, 27, 9, "WG1: 1 → 4 → 7", fill="white", edge="#CBD5DF", size=9.5)
+    box(grouped, 69, 12, 27, 9, "WG2: 2 → 5 → 8", fill="white", edge="#CBD5DF", size=9.5)
+    grouped.text(3, 4, "Persistent workgroups cross expert boundaries; M₂=0 contributes no tiles.", fontsize=10)
 
     prepare(rms, "C · RMSNorm")
     box(rms, 3, 68, 23, 13, "One input row", fill="#EDF3F8", edge=BLUE, bold=True)
