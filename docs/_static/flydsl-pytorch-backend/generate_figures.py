@@ -190,21 +190,7 @@ def architecture():
     save(fig, "flydsl-pytorch-architecture")
 
 
-def kernel_scheduling():
-    fig, axes = plt.subplots(2, 2, figsize=(13.6, 9.6))
-    fig.subplots_adjust(left=0.04, right=0.98, top=0.87, bottom=0.05, hspace=0.24, wspace=0.12)
-    title(
-        fig,
-        "Kernel scheduling at a glance",
-        "The supported operators use different work partitioning, data movement, and selection strategies",
-    )
-
-    def prepare(ax, heading):
-        ax.set(xlim=(0, 100), ylim=(0, 100))
-        ax.set_facecolor("#F6F8FB")
-        ax.axis("off")
-        ax.text(3, 94, heading, fontsize=14, fontweight="bold", va="top")
-
+def scheduling_diagrams():
     def box(ax, x, y, width, height, text, fill="white", edge="#CBD5DF", size=10, bold=False):
         ax.add_patch(
             FancyBboxPatch(
@@ -250,16 +236,25 @@ def kernel_scheduling():
             xx = x + width * col / cols
             ax.plot([xx, xx], [y, y + height], color=edge, linewidth=0.65)
 
-    dense, grouped, rms, topk_ax = axes.flat
+    def canvas(headline, subtitle, height=5.5):
+        fig, ax = plt.subplots(figsize=(12.6, height))
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        title(fig, headline, subtitle)
+        ax.set(xlim=(0, 100), ylim=(0, 100))
+        ax.axis("off")
+        return fig, ax
 
-    prepare(dense, "A · Dense / MXFP HTI tile mapping")
-    dense.text(3, 84, "A[BM, BK] × B[BK, BN] → C[BM, BN]", fontsize=11, fontweight="bold")
+    # Dense GEMM: canonical matrix-tile view plus the HTI K-pair pipeline.
+    fig, dense = canvas(
+        "Dense GEMM: tiled half-tile-interleaved schedule",
+        "Large-shape example · A[BM, BK] × B[BK, BN] → C[BM, BN] · 8 Wave64",
+    )
     grid_rect(dense, 5, 38, 17, 38, 4, 2, "#DCEAF5")
     grid_rect(dense, 33, 55, 28, 18, 2, 4, "#FFF0D3", edge="#D9A441")
     grid_rect(dense, 70, 36, 27, 42, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.5)
-    dense.text(13.5, 79, "A tile", ha="center", fontsize=10, fontweight="bold")
-    dense.text(47, 76, "B tile", ha="center", fontsize=10, fontweight="bold")
-    dense.text(83.5, 81, "C tile · 256 × 256", ha="center", fontsize=10, fontweight="bold")
+    dense.text(13.5, 80, "A tile", ha="center", fontsize=11, fontweight="bold")
+    dense.text(47, 77, "B tile", ha="center", fontsize=11, fontweight="bold")
+    dense.text(83.5, 81, "C tile · 256 × 256", ha="center", fontsize=11, fontweight="bold")
     dense.text(2, 57, "BM", ha="right", va="center", fontsize=9.5)
     dense.text(13.5, 33, "BK", ha="center", fontsize=9.5)
     dense.text(30, 64, "BK", ha="right", va="center", fontsize=9.5)
@@ -281,15 +276,58 @@ def kernel_scheduling():
     box(dense, 5, 12, 37, 12, "K tile t / t+1\nstaged in LDS", fill="#FFF7E8", edge="#D9A441", size=9.5)
     box(dense, 56, 12, 39, 12, "MFMA current pair\nprefetch next pair", fill="#FFF0EB", edge=ORANGE, size=9.5)
     arrow(dense, (42, 18), (56, 18))
-    dense.text(3, 4, "HTI keeps C00–C11 resident; MXFP co-stages E8M0 block scales.", fontsize=10)
+    dense.text(3, 4, "HTI keeps C00–C11 resident while the next K-tile pair is prefetched.", fontsize=10)
+    save(fig, "flydsl-dense-gemm-scheduling")
 
-    prepare(grouped, "B · Grouped GEMM persistent tiles")
-    grouped.text(3, 84, "Aᵍ[M_g, K] × Bᵍ[K, N] for each expert g", fontsize=11, fontweight="bold")
+    # MXFP: packed operands and block scales are staged together for scaled MFMA.
+    fig, mxfp = canvas(
+        "MXFP scaled GEMM: operands and block scales move together",
+        "MXFP8 / MXFP4 values · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
+    )
+    grid_rect(mxfp, 3, 52, 13, 30, 4, 2, "#DCEAF5")
+    grid_rect(mxfp, 21, 66, 22, 14, 2, 4, "#DCEAF5")
+    grid_rect(mxfp, 3, 39, 13, 7, 1, 4, "#E9E2F4", edge=PURPLE)
+    grid_rect(mxfp, 21, 51, 22, 7, 1, 4, "#E9E2F4", edge=PURPLE)
+    mxfp.text(9.5, 84, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(32, 83, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(9.5, 35, "S_A [BM, BK/32]", ha="center", fontsize=9)
+    mxfp.text(32, 47, "S_B [BN, BK/32]", ha="center", fontsize=9)
+    box(mxfp, 49, 51, 17, 28, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
+    box(mxfp, 71, 56, 12, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
+    grid_rect(mxfp, 88, 49, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
+    mxfp.text(93, 84, "C quadrant", ha="center", fontsize=10.5, fontweight="bold")
+    for start, end in [
+        ((16, 67), (49, 67)),
+        ((43, 70), (49, 70)),
+        ((16, 42.5), (49, 57)),
+        ((43, 54.5), (49, 60)),
+        ((66, 65), (71, 65)),
+        ((83, 65), (88, 65)),
+    ]:
+        arrow(mxfp, start, end)
+    box(mxfp, 12, 14, 24, 11, "Scale chunk t", fill="#E9E2F4", edge=PURPLE)
+    box(mxfp, 40, 14, 24, 11, "MFMA K pair", fill="#FFF0EB", edge=ORANGE)
+    box(mxfp, 68, 14, 24, 11, "Prefetch next chunk", fill="#E9E2F4", edge=PURPLE)
+    arrow(mxfp, (36, 19.5), (40, 19.5))
+    arrow(mxfp, (64, 19.5), (68, 19.5))
+    mxfp.text(
+        3,
+        4,
+        "HTI derives chunk size from tile/workgroup geometry and reuses staged buffers.",
+        fontsize=10,
+    )
+    save(fig, "flydsl-mxfp-gemm-scheduling")
+
+    # Grouped GEMM: varying expert matrices are flattened into one persistent stream.
+    fig, grouped = canvas(
+        "Grouped GEMM: persistent tiles across experts",
+        "Aᵍ[M_g, K] × Bᵍ[K, N] · cumulative offsets define each expert's row range",
+    )
     expert_specs = [
-        (5, 54, 17, 25, 4, "E0 · M₀"),
-        (29, 60, 17, 19, 3, "E1 · M₁"),
-        (53, 75, 17, 2, 1, "E2 · M₂=0"),
-        (77, 48, 17, 31, 5, "E3 · M₃"),
+        (5, 54, 17, 29, 4, "E0 · M₀"),
+        (29, 61, 17, 22, 3, "E1 · M₁"),
+        (53, 79, 17, 2, 1, "E2 · M₂=0"),
+        (77, 48, 17, 35, 5, "E3 · M₃"),
     ]
     for x, y, width, height, rows_count, label in expert_specs:
         fill, edge = ("#E9EDF1", GRAY) if "M₂" in label else ("#DCEAF5", BLUE)
@@ -304,7 +342,7 @@ def kernel_scheduling():
             fontweight="bold",
             bbox={"facecolor": fill, "edgecolor": "none", "pad": 1},
         )
-    grouped.text(3, 42, "Flatten valid matrix tiles into one global stream", fontsize=10.5, fontweight="bold")
+    grouped.text(3, 42, "Flatten valid matrix tiles into one global stream", fontsize=11, fontweight="bold")
     for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E1·0"), (51, "E1·1"), (67, "E3·0"), (83, "E3·1")]:
         box(grouped, x, 29, 13, 9, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
     arrow(grouped, (13, 54), (10, 39))
@@ -314,40 +352,55 @@ def kernel_scheduling():
     box(grouped, 37, 12, 27, 9, "WG1: 1 → 4 → 7", fill="white", edge="#CBD5DF", size=9.5)
     box(grouped, 69, 12, 27, 9, "WG2: 2 → 5 → 8", fill="white", edge="#CBD5DF", size=9.5)
     grouped.text(3, 4, "Persistent workgroups cross expert boundaries; M₂=0 contributes no tiles.", fontsize=10)
+    save(fig, "flydsl-grouped-gemm-scheduling")
 
-    prepare(rms, "C · RMSNorm")
-    box(rms, 3, 68, 23, 13, "One input row", fill="#EDF3F8", edge=BLUE, bold=True)
-    box(rms, 38, 68, 25, 13, "128-bit loads\nregister values", fill="white", edge="#CBD5DF")
-    box(rms, 74, 68, 23, 13, "Apply rstd\n× weight", fill="#FFF0EB", edge=ORANGE)
-    arrow(rms, (26, 74.5), (38, 74.5))
-    arrow(rms, (63, 74.5), (74, 74.5))
-    rms.text(3, 55, "Wave64 partial sum-of-squares", fontsize=10.5, fontweight="bold")
-    for x, label in [(5, "W0"), (27, "W1"), (49, "W2"), (71, "W3")]:
-        box(rms, x, 39, 18, 11, label, fill="#E9E2F4", edge=PURPLE, bold=True)
-    box(rms, 18, 19, 28, 12, "LDS partials", fill="#FFF7E8", edge="#D9A441")
-    box(rms, 55, 19, 28, 12, "Wave 0 final reduce", fill="#E9E2F4", edge=PURPLE)
-    arrow(rms, (50, 39), (35, 31))
-    arrow(rms, (46, 25), (55, 25))
-    rms.text(3, 5, "One thread block per row; resident values produce output and backward rstd.", fontsize=10)
+    # RMSNorm: vector loads, hierarchical reduction, and reuse of resident values.
+    fig, rms = canvas(
+        "RMSNorm: one thread block per row",
+        "128-bit vector loads · Wave64 partial reductions · FP32 rstd for backward",
+    )
+    box(rms, 3, 62, 18, 14, "Input row", fill="#EDF3F8", edge=BLUE, bold=True)
+    box(rms, 27, 62, 20, 14, "Register\nvalues", fill="white", edge="#CBD5DF")
+    arrow(rms, (21, 69), (27, 69))
+    rms.text(3, 84, "Load once, retain values for normalization", fontsize=11, fontweight="bold")
+    rms.text(53, 84, "Hierarchical FP32 sum-of-squares", fontsize=11, fontweight="bold")
+    for x, label in [(53, "W0"), (64, "W1"), (75, "W2"), (86, "W3")]:
+        box(rms, x, 63, 9, 11, label, fill="#E9E2F4", edge=PURPLE, bold=True)
+    box(rms, 55, 41, 19, 11, "LDS partials", fill="#FFF7E8", edge="#D9A441")
+    box(rms, 79, 41, 18, 11, "Wave 0 reduce", fill="#E9E2F4", edge=PURPLE)
+    arrow(rms, (76, 63), (65, 52))
+    arrow(rms, (74, 46.5), (79, 46.5))
+    box(rms, 25, 22, 23, 13, "rrms = rsqrt\n(sum/N + eps)", fill="#E9E2F4", edge=PURPLE)
+    box(rms, 57, 22, 18, 13, "× weight", fill="#FFF0EB", edge=ORANGE)
+    box(rms, 83, 22, 14, 13, "Output\n+ rstd", fill="#EDF3F8", edge=BLUE)
+    arrow(rms, (47, 62), (37, 35))
+    arrow(rms, (88, 41), (44, 35))
+    arrow(rms, (48, 28.5), (57, 28.5))
+    arrow(rms, (75, 28.5), (83, 28.5))
+    rms.text(3, 5, "The same register-resident input values feed the output after the block reduction.", fontsize=10)
+    save(fig, "flydsl-rmsnorm-scheduling")
 
-    prepare(topk_ax, "D · TopK")
-    topk_ax.text(3, 83, "Small fixed K", fontsize=10.5, fontweight="bold")
-    box(topk_ax, 3, 64, 18, 13, "K = 2/4/8/16", fill="#EDF3F8", edge=BLUE)
-    box(topk_ax, 29, 64, 20, 13, "Lane-local\nbitonic sort", fill="white", edge="#CBD5DF")
-    box(topk_ax, 57, 64, 20, 13, "Butterfly\ntop-K merge", fill="#E9E2F4", edge=PURPLE)
-    box(topk_ax, 85, 64, 12, 13, "K pairs", fill="#FFF0EB", edge=ORANGE)
-    for start, end in [((21, 70.5), (29, 70.5)), ((49, 70.5), (57, 70.5)), ((77, 70.5), (85, 70.5))]:
+    # TopK: independent register and radix-select algorithms.
+    fig, topk_ax = canvas(
+        "TopK: two specialized selection paths",
+        "Small fixed K stays in registers · larger K narrows candidates with four radix passes",
+    )
+    topk_ax.text(3, 80, "Register path · K = {2, 4, 8, 16}", fontsize=11, fontweight="bold")
+    box(topk_ax, 3, 58, 18, 14, "One input row", fill="#EDF3F8", edge=BLUE)
+    box(topk_ax, 28, 58, 20, 14, "Lane-local\nbitonic sort", fill="white", edge="#CBD5DF")
+    box(topk_ax, 55, 58, 20, 14, "Butterfly\ntop-K merge", fill="#E9E2F4", edge=PURPLE)
+    box(topk_ax, 84, 58, 13, 14, "K pairs", fill="#FFF0EB", edge=ORANGE)
+    for start, end in [((21, 65), (28, 65)), ((48, 65), (55, 65)), ((75, 65), (84, 65))]:
         arrow(topk_ax, start, end)
-    topk_ax.text(3, 49, "Larger K", fontsize=10.5, fontweight="bold")
-    box(topk_ax, 3, 29, 18, 13, "Full row", fill="#EDF3F8", edge=BLUE)
-    box(topk_ax, 29, 29, 20, 13, "Four radix\nbyte passes", fill="white", edge="#CBD5DF")
-    box(topk_ax, 57, 29, 20, 13, "Threshold\ncandidates", fill="#E9E2F4", edge=PURPLE)
-    box(topk_ax, 85, 29, 12, 13, "K pairs", fill="#FFF0EB", edge=ORANGE)
-    for start, end in [((21, 35.5), (29, 35.5)), ((49, 35.5), (57, 35.5)), ((77, 35.5), (85, 35.5))]:
+    topk_ax.text(3, 43, "Radix-select path · K = 64–1024", fontsize=11, fontweight="bold")
+    box(topk_ax, 3, 21, 18, 14, "One input row", fill="#EDF3F8", edge=BLUE)
+    box(topk_ax, 28, 21, 20, 14, "Four radix\nbyte passes", fill="white", edge="#CBD5DF")
+    box(topk_ax, 55, 21, 20, 14, "Threshold\ncandidates", fill="#E9E2F4", edge=PURPLE)
+    box(topk_ax, 84, 21, 13, 14, "Bitonic\nK pairs", fill="#FFF0EB", edge=ORANGE)
+    for start, end in [((21, 28), (28, 28)), ((48, 28), (55, 28)), ((75, 28), (84, 28))]:
         arrow(topk_ax, start, end)
-    topk_ax.text(3, 6, "Deterministic: prefix-sum slots · Off: atomic slot allocation.", fontsize=10)
-
-    save(fig, "flydsl-kernel-scheduling")
+    topk_ax.text(3, 5, "Deterministic radix: prefix-sum slots · Off: atomic slot allocation.", fontsize=10)
+    save(fig, "flydsl-topk-scheduling")
 
 
 def dense_gemm():
@@ -630,7 +683,7 @@ def vllm_e2e():
 
 if __name__ == "__main__":
     architecture()
-    kernel_scheduling()
+    scheduling_diagrams()
     dense_gemm()
     mxfp_gemm()
     grouped_gemm()

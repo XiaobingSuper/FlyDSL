@@ -1,7 +1,7 @@
 # PyTorch FlyDSL blog figures and benchmark data
 
-This directory contains the architecture and kernel-scheduling overviews, five
-operator-performance figures, and one end-to-end vLLM figure for
+This directory contains the architecture overview, five operator-specific
+scheduling diagrams, five operator-performance figures, and one end-to-end vLLM figure for
 [the blog](../../pytorch_flydsl_backend_blog.md), along with their source data
 and rendering material. Regenerating the figures does not run a benchmark.
 
@@ -132,11 +132,12 @@ With Python 3, Matplotlib, and NumPy installed, run from the repository root:
 python3 docs/_static/flydsl-pytorch-backend/generate_figures.py
 ```
 
-The script writes PNG and SVG versions of the architecture and kernel-scheduling
-overviews and the dense GEMM, MXFP scaled GEMM, grouped GEMM, RMSNorm, TopK, and
-end-to-end vLLM charts. It also prints the calculated performance aggregates.
-SVG text remains editable. The self-contained report remains the source for all
-four vLLM metrics and the detailed test configuration.
+The script writes PNG and SVG versions of the architecture overview, each
+operator-specific scheduling diagram, and the dense GEMM, MXFP scaled GEMM,
+grouped GEMM, RMSNorm, TopK, and end-to-end vLLM performance charts. It also
+prints the calculated performance aggregates. SVG text remains editable. The
+self-contained report remains the source for all four vLLM metrics and the
+detailed test configuration.
 
 The older `flydsl-mxfp8-performance` assets are retained for reference but are not
 used in the publication article. They describe the earlier
