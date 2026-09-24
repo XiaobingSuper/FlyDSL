@@ -269,7 +269,16 @@ def scheduling_diagrams():
     for col in range(1, 4):
         xx = 70 + 13.5 * col / 4
         dense.plot([xx, xx], [57, 78], color=PURPLE, linewidth=0.7)
-    dense.text(76.75, 67.5, "C00\n2 × 4 waves", ha="center", va="center", fontsize=7.5, fontweight="bold")
+    dense.text(
+        76.75,
+        67.5,
+        "C00\n2 × 4 waves",
+        ha="center",
+        va="center",
+        fontsize=7.5,
+        fontweight="bold",
+        bbox={"facecolor": "#FDE2DA", "edgecolor": "none", "pad": 1},
+    )
     dense.text(90.25, 67.5, "C01", ha="center", va="center", fontsize=8.5, fontweight="bold")
     dense.text(76.75, 46.5, "C10", ha="center", va="center", fontsize=8.5, fontweight="bold")
     dense.text(90.25, 46.5, "C11", ha="center", va="center", fontsize=8.5, fontweight="bold")
@@ -284,25 +293,25 @@ def scheduling_diagrams():
         "MXFP scaled GEMM: operands and block scales move together",
         "MXFP8 / MXFP4 values · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
     )
-    grid_rect(mxfp, 3, 52, 13, 30, 4, 2, "#DCEAF5")
-    grid_rect(mxfp, 21, 66, 22, 14, 2, 4, "#DCEAF5")
-    grid_rect(mxfp, 3, 39, 13, 7, 1, 4, "#E9E2F4", edge=PURPLE)
-    grid_rect(mxfp, 21, 51, 22, 7, 1, 4, "#E9E2F4", edge=PURPLE)
-    mxfp.text(9.5, 84, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(32, 83, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(9.5, 35, "S_A [BM, BK/32]", ha="center", fontsize=9)
-    mxfp.text(32, 47, "S_B [BN, BK/32]", ha="center", fontsize=9)
-    box(mxfp, 49, 51, 17, 28, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
-    box(mxfp, 71, 56, 12, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
-    grid_rect(mxfp, 88, 49, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
-    mxfp.text(93, 84, "C quadrant", ha="center", fontsize=10.5, fontweight="bold")
+    grid_rect(mxfp, 3, 64, 14, 20, 4, 2, "#DCEAF5")
+    grid_rect(mxfp, 3, 38, 24, 14, 2, 4, "#DCEAF5")
+    grid_rect(mxfp, 22, 64, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
+    grid_rect(mxfp, 32, 38, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
+    mxfp.text(10, 86, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(15, 54, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(31, 60, "S_A [BM, BK/32]", ha="center", fontsize=9)
+    mxfp.text(41, 34, "S_B [BN, BK/32]", ha="center", fontsize=9)
+    box(mxfp, 55, 48, 16, 32, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
+    box(mxfp, 76, 55, 11, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
+    grid_rect(mxfp, 91, 47, 8, 34, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
+    mxfp.text(95, 84, "C quadrant", ha="center", fontsize=10.5, fontweight="bold")
     for start, end in [
-        ((16, 67), (49, 67)),
-        ((43, 70), (49, 70)),
-        ((16, 42.5), (49, 57)),
-        ((43, 54.5), (49, 60)),
-        ((66, 65), (71, 65)),
-        ((83, 65), (88, 65)),
+        ((17, 76), (55, 73)),
+        ((40, 67.5), (55, 67)),
+        ((27, 47), (55, 58)),
+        ((50, 41.5), (55, 54)),
+        ((71, 64), (76, 64)),
+        ((87, 64), (91, 64)),
     ]:
         arrow(mxfp, start, end)
     box(mxfp, 12, 14, 24, 11, "Scale chunk t", fill="#E9E2F4", edge=PURPLE)
@@ -342,7 +351,15 @@ def scheduling_diagrams():
             fontweight="bold",
             bbox={"facecolor": fill, "edgecolor": "none", "pad": 1},
         )
-    grouped.text(3, 42, "Flatten valid matrix tiles into one global stream", fontsize=11, fontweight="bold")
+    grouped.text(
+        3,
+        42,
+        "Flatten valid matrix tiles into one global stream",
+        fontsize=11,
+        fontweight="bold",
+        bbox={"facecolor": "white", "edgecolor": "none", "pad": 2},
+        zorder=4,
+    )
     for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E1·0"), (51, "E1·1"), (67, "E3·0"), (83, "E3·1")]:
         box(grouped, x, 29, 13, 9, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
     arrow(grouped, (13, 54), (10, 39))

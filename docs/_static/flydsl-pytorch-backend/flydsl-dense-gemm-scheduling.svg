@@ -192,6 +192,14 @@ L 726.894 87.12
     <text style="font-weight: 700; font-size: 18px; font-family: 'DejaVu Sans'; text-anchor: middle; fill: #243447" x="589.68" y="155.446875" transform="rotate(-0 589.68 155.446875)">→</text>
    </g>
    <g id="text_12">
+    <g id="patch_8">
+     <path d="M 669.808617 137.503477
+L 722.743383 137.503477
+L 722.743383 119.896523
+L 669.808617 119.896523
+z
+" style="fill: #fde2da"/>
+    </g>
     <text style="font-weight: 700; font-size: 7.5px; font-family: 'DejaVu Sans'; fill: #243447" transform="translate(688.305492 126.570352)">C00</text>
     <text style="font-weight: 700; font-size: 7.5px; font-family: 'DejaVu Sans'; fill: #243447" transform="translate(670.783617 134.968711)">2 × 4 waves</text>
    </g>
