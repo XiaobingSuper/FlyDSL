@@ -1,4 +1,4 @@
-"""Rebuild the architecture overview and five published operator charts.
+"""Rebuild the architecture overview and published performance charts.
 
 Run with Python, Matplotlib, and NumPy. No GPU or PyTorch installation is needed.
 Charts use the accompanying CSV files. Sources and limits are in README.md.
@@ -395,6 +395,79 @@ def topk():
     save(fig, "flydsl-topk-results")
 
 
+def vllm_e2e():
+    data = rows("vllm_e2e.csv")
+    models = [
+        ("Qwen3-32B", "Qwen3 32B", BLUE),
+        ("Llama-3.1-8B-Instruct", "Llama 3.1 8B", PURPLE),
+        ("Llama-3.3-70B-Instruct", "Llama 3.3 70B", ORANGE),
+    ]
+    concurrency = [8, 16, 32, 64, 128, 256]
+    fig, axes = plt.subplots(2, 1, figsize=(12.6, 9.2))
+    fig.subplots_adjust(left=0.14, right=0.95, top=0.78, bottom=0.10, hspace=0.42)
+    title(
+        fig,
+        "vLLM end-to-end: whole-request speedup",
+        "MI355X · one GPU · ISL 256 / OSL 512 · positive values favor FlyDSL",
+    )
+    y = np.arange(len(concurrency))
+    height = 0.22
+    handles = []
+
+    for ax, precision, heading, limits, ticks in [
+        (axes[0], "bf16", "BF16", (-3, 15), [-2, 0, 5, 10, 15]),
+        (axes[1], "mxfp8", "MXFP8 A8W8", (0, 115), [0, 25, 50, 75, 100]),
+    ]:
+        lookup = {
+            (r["model"], int(r["concurrency"])): float(r["whole_request_speedup_pct"])
+            for r in data
+            if r["precision"] == precision
+        }
+        for model_index, (model, label, color) in enumerate(models):
+            values = [lookup[(model, batch)] for batch in concurrency]
+            offset = (model_index - 1) * height
+            bars = ax.barh(y + offset, values, height=height, color=color)
+            if ax is axes[0]:
+                handles.append(Patch(color=color, label=label))
+            for bar, value in zip(bars, values):
+                if precision == "bf16" and abs(value) < 1:
+                    continue
+                pad = 0.25 if precision == "bf16" else 1.2
+                ax.text(
+                    value + pad if value >= 0 else value - pad,
+                    bar.get_y() + bar.get_height() / 2,
+                    f"{value:.1f}%",
+                    ha="left" if value >= 0 else "right",
+                    va="center",
+                    fontsize=9.5,
+                )
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_axisbelow(True)
+        ax.xaxis.grid(True, color=GRID, linewidth=0.8)
+        ax.axvline(0, color=INK, linestyle=(0, (4, 4)), linewidth=1.2)
+        ax.tick_params(axis="both", length=0, pad=7)
+        ax.set_xlim(*limits)
+        ax.set_xticks(ticks, [f"{tick:g}%" for tick in ticks])
+        ax.set_yticks(y, concurrency)
+        ax.set_ylim(len(concurrency) - 0.55, -0.55)
+        ax.set_xlabel("Whole-request speedup", labelpad=8)
+        ax.set_ylabel("Concurrent requests", labelpad=8)
+        ax.set_title(heading, fontsize=15, fontweight="bold", loc="left", pad=12)
+
+        all_values = [float(r["whole_request_speedup_pct"]) for r in data if r["precision"] == precision]
+        print(f"vLLM {precision.upper()}: range={min(all_values):.1f}%–{max(all_values):.1f}%")
+
+    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.52, 0.86), ncol=3, frameon=False)
+    fig.text(
+        0.04,
+        0.025,
+        "BF16 baseline: ATen + Triton · MXFP8 baseline: ATen · treatment adds FlyDSL · TP = 1",
+        fontsize=11,
+    )
+    save(fig, "flydsl-vllm-e2e-results")
+
+
 if __name__ == "__main__":
     architecture()
     dense_gemm()
@@ -402,3 +475,4 @@ if __name__ == "__main__":
     grouped_gemm()
     rmsnorm()
     topk()
+    vllm_e2e()

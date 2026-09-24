@@ -13,12 +13,12 @@ the uniform-group GEMM suite**, and **4.82x for small-K TopK over ATen** with
 deterministic algorithms disabled. Across all 24 grouped-GEMM cases, the
 geometric-mean speedup over Triton is **1.20x**. These gains are most relevant
 when the supported operations account for a significant share of model runtime.
+In end-to-end vLLM A/B tests, whole-request speedup reaches **12.9% for BF16**
+and **104.2% for MXFP8**, with the result depending on model and concurrency.
 
 Users enable FlyDSL with `torch.compile` and GEMM autotuning for dense, grouped,
 and MXFP GEMMs; eligible eager RMSNorm and TopK calls dispatch automatically.
-Unsupported inputs retain existing PyTorch implementations. End-to-end gains
-depend on model coverage and workload configuration; a dedicated section below
-is reserved for those results.
+Unsupported inputs retain existing PyTorch implementations.
 
 ## How FlyDSL Fits into PyTorch
 
@@ -263,18 +263,69 @@ indices.
 
 ## End-to-End Model Performance
 
-This section is reserved for model-level results. It will record the model,
-software versions, GPU count, precision, batch and sequence sizes, compilation
-and autotuning settings, and warmup/timing method. Performance will be shown by
-comparing the same workload with FlyDSL enabled and disabled, using end-to-end
-latency or throughput together with an operator profile that attributes the gain.
+We evaluated FlyDSL with `vllm bench serve` against a real HTTP service on one
+MI355X GPU (`TP=1`). The three models are Llama-3.1-8B-Instruct, Qwen3-32B, and
+Llama-3.3-70B-Instruct. Every request uses a 256-token input and a fixed
+512-token output (`--ignore-eos`), with concurrency swept over
+`8, 16, 32, 64, 128, 256`. Both arms use `max_num_batched_tokens=2048`,
+piecewise CUDA graphs, prefix caching disabled, and the same per-model KV-cache
+setting.
+
+Only the Inductor GEMM candidate list changes between the baseline and treatment.
+Positive bars mean that adding FlyDSL reduces whole-request latency. The
+[full self-contained benchmark report](_static/flydsl-pytorch-backend/vllm-bf16-mxfp8-report.html)
+also includes output throughput, time per output token (TPOT), time to first
+token (TTFT), and the complete per-round configuration.
+
+### BF16 End-to-End Results
+
+The BF16 baseline enables ATen and Triton; the treatment adds FlyDSL. FlyDSL uses
+the exhaustive candidate set while Triton uses its default set in both arms.
+Measurements use at least two ABBA-interleaved repetitions and report medians;
+the combined within-group noise floor is **1.79%**.
+
+Llama-3.1-8B shows the clearest low-to-medium-concurrency benefit, reaching
+**12.9% whole-request speedup at concurrency 16** and remaining above **7%**
+through concurrency 64. Qwen3-32B peaks at **5.5%** at concurrency 64.
+Llama-3.3-70B remains mostly within the measured noise floor. At the highest
+concurrencies, the Llama-3.1-8B result returns to parity and reaches **-1.3%**
+at concurrency 256.
+
+Output-throughput results follow the same pattern. Decode TPOT improves by up to
+**16.1%** for Llama-3.1-8B and **5.9%** for Qwen3-32B, while TTFT is more
+variable because prefill benefits depend on the model and batch shape.
+
+### MXFP8 End-to-End Results
+
+The MXFP8 run uses A8W8 quantization with `1 × 32` block scales and BF16
+computation. Because this path has no Triton candidate, the baseline is ATen
+(hipBLASLt) and the treatment adds FlyDSL. Each cell contains
+`16 × concurrency` requests after a discarded `2 × concurrency` warmup. This
+round has one measured run per cell, so small differences should not be treated
+as variance-qualified results.
+
+FlyDSL improves all 18 model-concurrency combinations. Whole-request speedup
+ranges from **39.8% to 102.7%** for Qwen3-32B, **4.3% to 91.7%** for
+Llama-3.1-8B, and **37.7% to 104.2%** for Llama-3.3-70B. The largest result,
+**104.2%**, occurs for Llama-3.3-70B at concurrency 64.
+
+![BF16 and MXFP8 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-e2e-results.png)
+
+*Figure 7. vLLM whole-request speedup on one MI355X. BF16 compares
+ATen/Triton with ATen/Triton/FlyDSL; MXFP8 compares ATen with ATen/FlyDSL.
+The panels use independent horizontal scales, and positive values favor FlyDSL.*
+
+Decode TPOT improves in every measured configuration, reaching **110.2%** for
+Qwen3-32B, **91.9%** for Llama-3.1-8B, and **118.7%** for Llama-3.3-70B.
+TTFT remains model- and concurrency-dependent, indicating that most of the
+consistent end-to-end gain comes from decode.
 
 ## Try It in PyTorch
 
-Use a [ROCm PyTorch nightly](https://pytorch.org/get-started/locally/) that includes
-the [MXFP scaled GEMM support](https://github.com/pytorch/pytorch/pull/196719)
-alongside the existing FlyDSL operators, then install an optional runtime from
-the supported 0.3.x series:
+Use a recent [ROCm PyTorch nightly](https://pytorch.org/get-started/locally/) for
+MI350-series GPUs. This article assumes that it already contains all the FlyDSL
+integrations described above, including MXFP scaled GEMM. Then install an
+optional runtime from the supported 0.3.x series:
 
 ```bash
 python -m pip install --upgrade "flydsl>=0.3.0,<0.4"
@@ -392,6 +443,7 @@ performance results presented here.
 
 The current integration connects FlyDSL kernel development to both eager
 operators and compiled GEMMs, giving PyTorch users a practical way to benefit
-from optimized AMD kernels. Try it on your workloads and share results or
-feature requests through the
+from optimized AMD kernels. The vLLM results show how those kernel choices can
+translate into model-level gains, particularly for MXFP8 decode workloads. Try
+it on your workloads and share results or feature requests through the
 [PyTorch issue tracker](https://github.com/pytorch/pytorch/issues/new/choose).
