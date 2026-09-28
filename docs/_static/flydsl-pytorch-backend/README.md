@@ -1,9 +1,10 @@
 # PyTorch FlyDSL blog figures and benchmark data
 
 This directory contains the architecture overview, five operator-specific
-scheduling diagrams, five operator-performance figures, and one end-to-end vLLM figure for
-[the blog](../../pytorch_flydsl_backend_blog.md), along with their source data
-and rendering material. Regenerating the figures does not run a benchmark.
+scheduling diagrams, five operator-performance figures, and three end-to-end
+vLLM figures for [the blog](../../pytorch_flydsl_backend_blog.md), along with
+their source data and rendering material. Regenerating the figures does not run
+a benchmark.
 
 ## Publication scope
 
@@ -14,12 +15,13 @@ PyTorch `main` at commit `2e9b4aff8d49b22bbebf288ccbf63983c51e45f0`;
 the MXFP operator table uses the final numbers published in the benchmark
 comment last edited on September 20.
 
-The MXFP implementation and tests cover NN, NT, TN, and TT layouts, with
-layout-dependent alignment checks. Both formats require logical `K` to be a
-multiple of 128, contiguous unswizzled E8M0 block scales, zero storage offsets,
-and FP16/BF16 output without fast accumulation. An optional one-dimensional bias
-is supported when its length is `N` and its dtype matches the output. Eligible NT
-shapes can have M/N tails. All published MXFP benchmark shapes satisfy the
+The API accepts eligible input views, but Inductor canonicalizes the FlyDSL MXFP
+path to row-major A and column-major B (NT), materializing that layout when
+needed. Both formats require logical `K` to be a multiple of 128, contiguous
+unswizzled E8M0 block scales, zero storage offsets, and FP16/BF16 output without
+fast accumulation. An optional one-dimensional bias is supported when its length
+is `N` and its dtype matches the output. Eligible canonical NT shapes can have
+M/N tails. All published MXFP benchmark shapes use this layout and satisfy the
 current requirements.
 
 ## Architecture overview
@@ -47,14 +49,14 @@ updated on September 20. CSV values preserve the precision of the published
 latency or throughput columns. Every case in each source suite is included; no
 cases are removed based on performance.
 
-| Data | Cases | Published source | Measurement setup |
+| Data | Cases | Source | Measurement setup |
 | --- | ---: | --- | --- |
 | [dense_gemm.csv](dense_gemm.csv) | 15 | [Dense GEMM benchmark comment](https://github.com/pytorch/pytorch/pull/190903#issuecomment-5061510962) | BF16 NT on MI355 (`gfx950`); graph replay; median of four accuracy-checked runs; FlyDSL/Triton `EXHAUSTIVE`, ATen default |
 | [mxfp_gemm.csv](mxfp_gemm.csv) | 34 | [MXFP8/MXFP4 benchmark comment](https://github.com/pytorch/pytorch/pull/196719#issuecomment-5632055416) | MI355X (`gfx950`); NT layout, 17 shapes per format; FlyDSL versus ATen |
 | [grouped_gemm.csv](grouped_gemm.csv) | 24 | [Grouped GEMM PR](https://github.com/pytorch/pytorch/pull/194032) | BF16 on `gfx950`; 14 uniform-group shapes, five K/N variants at `G=8, M=512`, and five ragged-M cases at `G=8, K=N=4096`; isolated process and fresh cache per backend/shape; steady-state TFLOP/s; output checked against eager |
 | [rmsnorm.csv](rmsnorm.csv) | 22 | [RMSNorm PR](https://github.com/pytorch/pytorch/pull/191447) | FP16/BF16/FP32 on MI355X; FlyDSL 0.3.0; GPU events, 10 warmup and 50 timed iterations; one run per case |
 | [topk.csv](topk.csv) | 33 | [TopK PR](https://github.com/pytorch/pytorch/pull/193548) | FP32 on MI355X; GPU events, 20 warmup and 100 timed iterations; median of three runs for each determinism setting |
-| [vllm_e2e.csv](vllm_e2e.csv) | 18 BF16 + 18 MXFP8 | [End-to-end A/B report](vllm-bf16-mxfp8-report.html) | `vllm bench serve` on one MI355X; three models; concurrency 8–256; ISL 256, OSL 512; TP=1; fixed per-model KV cache |
+| [vllm_e2e.csv](vllm_e2e.csv) | 18 each for BF16/MXFP8/MXFP4 | Local vLLM A/B run | `vllm bench serve` on one MI355X; three models; concurrency 8–256; ISL 256, OSL 512; TP=1; fixed per-model KV cache |
 
 The suites are separate experiments, not a single run under one common software
 environment. Only RMSNorm's source specifies FlyDSL 0.3.0 for the reported table;
@@ -69,16 +71,16 @@ hardware without assigning an output dtype or importing another suite's timing
 protocol. Quantization and end-to-end model costs are not characterized by
 these throughput tables.
 
-The end-to-end report compares Llama-3.1-8B-Instruct, Qwen3-32B, and
+The end-to-end measurements compare Llama-3.1-8B-Instruct, Qwen3-32B, and
 Llama-3.3-70B-Instruct under fixed-length generation (`--ignore-eos`), with
 `max_num_batched_tokens=2048`, piecewise CUDA graphs, and prefix caching
 disabled. BF16 compares `ATEN,TRITON` with `ATEN,TRITON,FLYDSL`, uses at least
-two ABBA-interleaved repetitions, and reports medians. MXFP8 compares ATen with
-ATen plus FlyDSL; each cell has one measured run after a separate warmup. The
-blog uses the report's whole-request latency results; the report also contains
-output throughput, TPOT, and TTFT results. `vllm_e2e.csv` transcribes the
-whole-request speedups used to rebuild the publication figure in the common
-visual style.
+two ABBA-interleaved repetitions, and reports medians. MXFP8 and MXFP4 compare
+ATen with ATen plus FlyDSL; each cell has one measured run after a separate
+warmup. MXFP4 leaves `lm_head` unquantized and reduces measured requests from 16
+to four waves at concurrency 128 and 256. `vllm_e2e.csv` stores the
+whole-request percentage deltas used by the blog; the plotting script converts
+each value `p` to `1 + p / 100` for the publication's speedup-ratio convention.
 
 ## Calculations
 
@@ -132,12 +134,11 @@ With Python 3, Matplotlib, and NumPy installed, run from the repository root:
 python3 docs/_static/flydsl-pytorch-backend/generate_figures.py
 ```
 
-The script writes PNG and SVG versions of the architecture overview, each
+The script writes PNG versions of the architecture overview, each
 operator-specific scheduling diagram, and the dense GEMM, MXFP scaled GEMM,
 grouped GEMM, RMSNorm, TopK, and end-to-end vLLM performance charts. It also
-prints the calculated performance aggregates. The publication commits the PNG
-assets; editable SVGs can be regenerated locally. The self-contained report
-remains the source for all four vLLM metrics and the detailed test configuration.
+prints the calculated performance aggregates. Set `FLYDSL_BLOG_WRITE_SVG=1` to
+also generate editable SVGs locally.
 
 The current `flydsl-mxfp-gemm-results` figure is generated from the 34
 measurements published on PR #196719.

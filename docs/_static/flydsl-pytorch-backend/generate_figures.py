@@ -5,6 +5,7 @@ Charts use the accompanying CSV files. Sources and limits are in README.md.
 """
 
 import csv
+import os
 from pathlib import Path
 
 import matplotlib
@@ -62,7 +63,10 @@ def title(fig, headline, subtitle):
 
 
 def save(fig, name):
-    for extension in ("png", "svg"):
+    extensions = ["png"]
+    if os.environ.get("FLYDSL_BLOG_WRITE_SVG") == "1":
+        extensions.append("svg")
+    for extension in extensions:
         metadata = {"Software": "FlyDSL blog figures"} if extension == "png" else {"Date": None}
         output = ROOT / f"{name}.{extension}"
         fig.savefig(output, dpi=180, metadata=metadata)
@@ -247,7 +251,7 @@ def scheduling_diagrams():
     # Dense GEMM: canonical matrix-tile view plus the HTI K-pair pipeline.
     fig, dense = canvas(
         "Dense GEMM: tiled half-tile-interleaved schedule",
-        "Large-shape example · A[BM, BK] × B[BK, BN] → C[BM, BN] · 8 Wave64",
+        "Large-shape HTI example · stages = 2 · A[BM, BK] × B[BK, BN] → C[BM, BN] · 8 Wave64",
     )
     grid_rect(dense, 5, 38, 17, 38, 2, 1, "#DCEAF5")
     grid_rect(dense, 33, 55, 28, 18, 1, 2, "#FFF0D3", edge="#D9A441")
@@ -286,56 +290,78 @@ def scheduling_diagrams():
     dense.text(90.25, 67.5, "C01", ha="center", va="center", fontsize=8.5, fontweight="bold")
     dense.text(76.75, 46.5, "C10", ha="center", va="center", fontsize=8.5, fontweight="bold")
     dense.text(90.25, 46.5, "C11", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    box(dense, 5, 12, 37, 12, "K tile t / t+1\nstaged in LDS", fill="#FFF7E8", edge="#D9A441", size=9.5)
-    box(dense, 56, 12, 39, 12, "MFMA current pair\nprefetch next pair", fill="#FFF0EB", edge=ORANGE, size=9.5)
-    arrow(dense, (42, 18), (56, 18))
-    dense.text(3, 4, "HTI keeps C00–C11 resident while the next K-tile pair is prefetched.", fontsize=10)
-    save(fig, "flydsl-dense-gemm-scheduling")
+    dense.text(
+        3,
+        29,
+        "HTI shown: 2-stage ring · Full-tile generalization: stage = k_tile % STAGES",
+        fontsize=10.5,
+    )
+    arrow(dense, (97, 40), (97, 30))
+    dense.text(95.5, 32.5, "advance K", fontsize=8.5, color="#526477", ha="right")
+    box(dense, 3, 17, 13, 9, "Stage 0", fill="#FFF7E8", edge="#D9A441", bold=True)
+    box(dense, 20, 17, 25, 9, "read t % 2 = 0", fill="#FFF0EB", edge=ORANGE)
+    box(dense, 55, 17, 40, 9, "after last reader: write K = t+2 to S0", fill="#EDF3F8", edge=BLUE)
+    arrow(dense, (45, 21.5), (55, 21.5))
+    box(dense, 3, 5, 13, 9, "Stage 1", fill="#FFF7E8", edge="#D9A441", bold=True)
+    box(dense, 20, 5, 25, 9, "read (t+1) % 2 = 1", fill="#FFF0EB", edge=ORANGE)
+    box(dense, 55, 5, 40, 9, "after last reader: write K = t+3 to S1", fill="#EDF3F8", edge=BLUE)
+    arrow(dense, (45, 9.5), (55, 9.5))
+    save(fig, "flydsl-dense-gemm-hti-pipeline")
 
     # MXFP: packed operands and block scales are staged together for scaled MFMA.
     fig, mxfp = canvas(
         "MXFP scaled GEMM: operands and block scales move together",
         "Shared Dense/BF16 HTI schedule · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
     )
-    grid_rect(mxfp, 3, 64, 14, 20, 2, 1, "#DCEAF5")
-    grid_rect(mxfp, 3, 38, 24, 14, 1, 2, "#DCEAF5")
-    grid_rect(mxfp, 22, 64, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
-    grid_rect(mxfp, 32, 38, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
-    mxfp.text(10, 86, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(15, 54, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(10, 77, "A0", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(10, 69, "A1", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(9, 45, "B0", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(21, 45, "B1", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(31, 60, "S_A [BM, BK/32]", ha="center", fontsize=9)
-    mxfp.text(41, 34, "S_B [BN, BK/32]", ha="center", fontsize=9)
-    box(mxfp, 55, 48, 16, 32, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
-    box(mxfp, 76, 55, 11, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
-    grid_rect(mxfp, 89, 48, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
-    mxfp.text(94, 83, "HTI C tile", ha="center", fontsize=10.5, fontweight="bold")
-    for x, y, label in [(91.5, 72, "C00"), (96.5, 72, "C01"), (91.5, 56, "C10"), (96.5, 56, "C11")]:
+    grid_rect(mxfp, 3, 58, 14, 20, 2, 1, "#DCEAF5")
+    grid_rect(mxfp, 3, 32, 24, 14, 1, 2, "#DCEAF5")
+    grid_rect(mxfp, 22, 57, 18, 12, 2, 4, "#E9E2F4", edge=PURPLE)
+    grid_rect(mxfp, 32, 30, 18, 12, 2, 4, "#E9E2F4", edge=PURPLE)
+    mxfp.text(10, 80, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(15, 48, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(10, 71, "A0", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(10, 63, "A1", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(9, 39, "B0", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(21, 39, "B1", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(2.5, 68, "BM", ha="right", va="center", fontsize=9)
+    mxfp.text(10, 54, "BK", ha="center", fontsize=9)
+    mxfp.text(2.5, 39, "BK", ha="right", va="center", fontsize=9)
+    mxfp.text(15, 28, "BN", ha="center", fontsize=9)
+    mxfp.text(31, 53, "S_A [BM, BK/32]", ha="center", fontsize=9)
+    mxfp.text(41, 44, "S_B [BN, BK/32]", ha="center", fontsize=9)
+    box(mxfp, 55, 42, 16, 32, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
+    box(mxfp, 76, 49, 11, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
+    grid_rect(mxfp, 89, 42, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
+    mxfp.text(94, 77, "HTI C tile", ha="center", fontsize=10.5, fontweight="bold")
+    for x, y, label in [(91.5, 66, "C00"), (96.5, 66, "C01"), (91.5, 50, "C10"), (96.5, 50, "C11")]:
         mxfp.text(x, y, label, ha="center", va="center", fontsize=7.5, fontweight="bold")
     for start, end in [
-        ((17, 76), (55, 73)),
-        ((40, 67.5), (55, 67)),
-        ((27, 47), (55, 58)),
-        ((50, 41.5), (55, 54)),
-        ((71, 64), (76, 64)),
-        ((87, 64), (89, 64)),
+        ((17, 75), (55, 70)),
+        ((40, 63), (55, 64)),
+        ((27, 45), (55, 54)),
+        ((50, 36), (55, 47)),
+        ((71, 58), (76, 58)),
+        ((87, 58), (89, 58)),
     ]:
         arrow(mxfp, start, end)
-    box(mxfp, 12, 14, 24, 11, "Scale chunk t", fill="#E9E2F4", edge=PURPLE)
-    box(mxfp, 40, 14, 24, 11, "MFMA K pair", fill="#FFF0EB", edge=ORANGE)
-    box(mxfp, 68, 14, 24, 11, "Prefetch next chunk", fill="#E9E2F4", edge=PURPLE)
-    arrow(mxfp, (36, 19.5), (40, 19.5))
-    arrow(mxfp, (64, 19.5), (68, 19.5))
     mxfp.text(
-        3,
-        4,
-        "Shared with Dense/BF16: C00–C11, wave layout, and K-pair prefetch · MXFP adds scale chunks.",
-        fontsize=10,
+        50,
+        27,
+        "Temporal schedule for the same HTI C tile: two rings, different lifetimes",
+        ha="center",
+        fontsize=10.5,
     )
-    save(fig, "flydsl-mxfp-gemm-scheduling")
+    arrow(mxfp, (94, 42), (94, 30))
+    mxfp.text(95.5, 35, "advance K", fontsize=8.5, color="#526477", ha="right")
+    box(mxfp, 3, 15, 17, 9, "A/B tile ring", fill="#EDF3F8", edge=BLUE, bold=True)
+    box(mxfp, 24, 15, 29, 9, "stage = k_tile % 2", fill="#FFF0EB", edge=ORANGE)
+    box(mxfp, 63, 15, 34, 9, "S0/S1: current pair → pair + 2", fill="#EDF3F8", edge=BLUE)
+    arrow(mxfp, (53, 19.5), (63, 19.5))
+    box(mxfp, 3, 3, 17, 9, "Scale chunk ring", fill="#E9E2F4", edge=PURPLE, bold=True)
+    box(mxfp, 24, 3, 29, 9, "slot = (k/chunk_tiles) % 2", fill="#E9E2F4", edge=PURPLE)
+    box(mxfp, 63, 3, 34, 9, "slot 0 current → slot 1 prefetch", fill="#E9E2F4", edge=PURPLE)
+    arrow(mxfp, (53, 7.5), (63, 7.5))
+    save(fig, "flydsl-mxfp-gemm-hti-pipeline")
 
     # Grouped GEMM: varying expert matrices are flattened into one persistent stream.
     fig, grouped = canvas(
@@ -384,14 +410,14 @@ def scheduling_diagrams():
     # RMSNorm: vector loads, hierarchical reduction, and reuse of resident values.
     fig, rms = canvas(
         "RMSNorm: one thread block per row",
-        "128-bit vector loads · Wave64 partial reductions · FP32 rstd for backward",
+        "128-bit vector body + scalar tail · 256 / 512 / 1024 threads selected by N · FP32 rstd",
     )
     box(rms, 3, 62, 18, 14, "Input row", fill="#EDF3F8", edge=BLUE, bold=True)
     box(rms, 27, 62, 20, 14, "Register\nvalues", fill="white", edge="#CBD5DF")
     arrow(rms, (21, 69), (27, 69))
     rms.text(3, 84, "Load once, retain values for normalization", fontsize=11, fontweight="bold")
-    rms.text(53, 84, "Hierarchical FP32 sum-of-squares", fontsize=11, fontweight="bold")
-    for x, label in [(53, "W0"), (64, "W1"), (75, "W2"), (86, "W3")]:
+    rms.text(53, 84, "4 / 8 / 16 Wave64 partial sums (N-dependent)", fontsize=11, fontweight="bold")
+    for x, label in [(53, "W0"), (64, "W1"), (75, "…"), (86, "Wlast")]:
         box(rms, x, 63, 9, 11, label, fill="#E9E2F4", edge=PURPLE, bold=True)
     box(rms, 55, 41, 19, 11, "LDS partials", fill="#FFF7E8", edge="#D9A441")
     box(rms, 79, 41, 18, 11, "Wave 0 reduce", fill="#E9E2F4", edge=PURPLE)
@@ -410,11 +436,11 @@ def scheduling_diagrams():
     # TopK: independent register and radix-select algorithms.
     fig, topk_ax = canvas(
         "TopK: two specialized selection paths",
-        "Small fixed K stays in registers · larger K narrows candidates with four radix passes",
+        "Register: one Wave64 per row, two rows per CTA · Radix: one CTA per row",
     )
     topk_ax.text(3, 80, "Register path · K = {2, 4, 8, 16}", fontsize=11, fontweight="bold")
     box(topk_ax, 3, 58, 18, 14, "One input row", fill="#EDF3F8", edge=BLUE)
-    box(topk_ax, 28, 58, 20, 14, "Lane-local\nbitonic sort", fill="white", edge="#CBD5DF")
+    box(topk_ax, 28, 58, 20, 14, "Group sort\n+ local top-K", fill="white", edge="#CBD5DF")
     box(topk_ax, 55, 58, 20, 14, "Butterfly\ntop-K merge", fill="#E9E2F4", edge=PURPLE)
     box(topk_ax, 84, 58, 13, 14, "K pairs", fill="#FFF0EB", edge=ORANGE)
     for start, end in [((21, 65), (28, 65)), ((48, 65), (55, 65)), ((75, 65), (84, 65))]:
@@ -643,41 +669,41 @@ def vllm_e2e():
         ("Llama-3.3-70B-Instruct", "Llama 3.3 70B", ORANGE),
     ]
     concurrency = [8, 16, 32, 64, 128, 256]
-    fig, axes = plt.subplots(2, 1, figsize=(12.6, 9.2))
-    fig.subplots_adjust(left=0.14, right=0.95, top=0.78, bottom=0.10, hspace=0.42)
-    title(
-        fig,
-        "vLLM end-to-end: whole-request speedup",
-        "MI355X · one GPU · ISL 256 / OSL 512 · positive values favor FlyDSL",
-    )
     y = np.arange(len(concurrency))
-    height = 0.22
-    handles = []
+    bar_height = 0.18
 
-    for ax, precision, heading, limits, ticks in [
-        (axes[0], "bf16", "BF16", (-3, 15), [-2, 0, 5, 10, 15]),
-        (axes[1], "mxfp8", "MXFP8 A8W8", (0, 115), [0, 25, 50, 75, 100]),
+    for precision, heading, limits, ticks, baseline, filename in [
+        ("bf16", "BF16", (0.97, 1.15), [0.98, 1, 1.05, 1.10, 1.15], "ATen + Triton", "bf16"),
+        ("mxfp8", "MXFP8 A8W8", (1, 2.12), [1, 1.25, 1.5, 1.75, 2], "ATen", "mxfp8"),
+        ("mxfp4", "MXFP4 A4W4", (1, 3.12), [1, 1.5, 2, 2.5, 3], "ATen", "mxfp4"),
     ]:
+        fig, ax = plt.subplots(figsize=(12.6, 5.7))
+        fig.subplots_adjust(left=0.14, right=0.95, top=0.72, bottom=0.18)
+        title(
+            fig,
+            f"vLLM end-to-end: {heading}",
+            "MI355X · one GPU · ISL 256 / OSL 512 · whole-request speedup · values above 1× favor FlyDSL",
+        )
         lookup = {
-            (r["model"], int(r["concurrency"])): float(r["whole_request_speedup_pct"])
+            (r["model"], int(r["concurrency"])): 1 + float(r["whole_request_speedup_pct"]) / 100
             for r in data
             if r["precision"] == precision
         }
+        handles = []
         for model_index, (model, label, color) in enumerate(models):
             values = [lookup[(model, batch)] for batch in concurrency]
-            offset = (model_index - 1) * height
-            bars = ax.barh(y + offset, values, height=height, color=color)
-            if ax is axes[0]:
-                handles.append(Patch(color=color, label=label))
+            offset = (model_index - 1) * 0.23
+            bars = ax.barh(y + offset, np.asarray(values) - 1, left=1, height=bar_height, color=color)
+            handles.append(Patch(color=color, label=label))
             for bar, value in zip(bars, values):
-                if precision == "bf16" and abs(value) < 1:
+                if precision == "bf16" and abs(value - 1) < 0.01:
                     continue
-                pad = 0.25 if precision == "bf16" else 1.2
+                pad = 0.003 if precision == "bf16" else 0.015
                 ax.text(
-                    value + pad if value >= 0 else value - pad,
+                    value + pad if value >= 1 else value - pad,
                     bar.get_y() + bar.get_height() / 2,
-                    f"{value:.1f}%",
-                    ha="left" if value >= 0 else "right",
+                    f"{value + 1e-9:.2f}×",
+                    ha="left" if value >= 1 else "right",
                     va="center",
                     fontsize=9.5,
                 )
@@ -685,27 +711,25 @@ def vllm_e2e():
             spine.set_visible(False)
         ax.set_axisbelow(True)
         ax.xaxis.grid(True, color=GRID, linewidth=0.8)
-        ax.axvline(0, color=INK, linestyle=(0, (4, 4)), linewidth=1.2)
+        ax.axvline(1, color=INK, linestyle=(0, (4, 4)), linewidth=1.2)
         ax.tick_params(axis="both", length=0, pad=7)
         ax.set_xlim(*limits)
-        ax.set_xticks(ticks, [f"{tick:g}%" for tick in ticks])
+        ax.set_xticks(ticks, [f"{tick:g}×" for tick in ticks])
         ax.set_yticks(y, concurrency)
         ax.set_ylim(len(concurrency) - 0.55, -0.55)
         ax.set_xlabel("Whole-request speedup", labelpad=8)
         ax.set_ylabel("Concurrent requests", labelpad=8)
-        ax.set_title(heading, fontsize=15, fontweight="bold", loc="left", pad=12)
 
-        all_values = [float(r["whole_request_speedup_pct"]) for r in data if r["precision"] == precision]
-        print(f"vLLM {precision.upper()}: range={min(all_values):.1f}%–{max(all_values):.1f}%")
-
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.52, 0.86), ncol=3, frameon=False)
-    fig.text(
-        0.04,
-        0.025,
-        "BF16 baseline: ATen + Triton · MXFP8 baseline: ATen · treatment adds FlyDSL · TP = 1",
-        fontsize=11,
-    )
-    save(fig, "flydsl-vllm-e2e-results")
+        all_values = [1 + float(r["whole_request_speedup_pct"]) / 100 for r in data if r["precision"] == precision]
+        print(f"vLLM {precision.upper()}: range={min(all_values):.3f}×–{max(all_values):.3f}×")
+        fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.52, 0.83), ncol=3, frameon=False)
+        fig.text(
+            0.04,
+            0.025,
+            f"Baseline: {baseline} · treatment adds FlyDSL · TP = 1",
+            fontsize=11,
+        )
+        save(fig, f"flydsl-vllm-{filename}-results")
 
 
 if __name__ == "__main__":
