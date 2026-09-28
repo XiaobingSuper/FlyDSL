@@ -135,12 +135,9 @@ python3 docs/_static/flydsl-pytorch-backend/generate_figures.py
 The script writes PNG and SVG versions of the architecture overview, each
 operator-specific scheduling diagram, and the dense GEMM, MXFP scaled GEMM,
 grouped GEMM, RMSNorm, TopK, and end-to-end vLLM performance charts. It also
-prints the calculated performance aggregates. SVG text remains editable. The
-self-contained report remains the source for all four vLLM metrics and the
-detailed test configuration.
+prints the calculated performance aggregates. The publication commits the PNG
+assets; editable SVGs can be regenerated locally. The self-contained report
+remains the source for all four vLLM metrics and the detailed test configuration.
 
-The older `flydsl-mxfp8-performance` assets are retained for reference but are not
-used in the publication article. They describe the earlier
-[scaled GEMM prototype](https://github.com/pytorch/pytorch/pull/193527).
 The current `flydsl-mxfp-gemm-results` figure is generated from the 34
 measurements published on PR #196719.
