@@ -1,4 +1,4 @@
-# Accelerating PyTorch on AMD MI350-Series GPUs with FlyDSL
+# Accelerating PyTorch on AMD GPUs with FlyDSL
 
 PyTorch users on AMD MI350-series GPUs can now accelerate common transformer
 hotspots without writing custom kernels: dense projection and feed-forward GEMMs,
