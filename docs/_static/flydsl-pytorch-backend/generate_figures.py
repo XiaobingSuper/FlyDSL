@@ -249,8 +249,8 @@ def scheduling_diagrams():
         "Dense GEMM: tiled half-tile-interleaved schedule",
         "Large-shape example · A[BM, BK] × B[BK, BN] → C[BM, BN] · 8 Wave64",
     )
-    grid_rect(dense, 5, 38, 17, 38, 4, 2, "#DCEAF5")
-    grid_rect(dense, 33, 55, 28, 18, 2, 4, "#FFF0D3", edge="#D9A441")
+    grid_rect(dense, 5, 38, 17, 38, 2, 1, "#DCEAF5")
+    grid_rect(dense, 33, 55, 28, 18, 1, 2, "#FFF0D3", edge="#D9A441")
     grid_rect(dense, 70, 36, 27, 42, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.5)
     dense.text(13.5, 80, "A tile", ha="center", fontsize=11, fontweight="bold")
     dense.text(47, 77, "B tile", ha="center", fontsize=11, fontweight="bold")
@@ -263,6 +263,10 @@ def scheduling_diagrams():
     dense.text(83.5, 31, "BN", ha="center", fontsize=9.5)
     dense.text(27, 62, "×", fontsize=18, fontweight="bold", ha="center", va="center")
     dense.text(65, 62, "→", fontsize=18, fontweight="bold", ha="center", va="center")
+    dense.text(13.5, 66.5, "A0", ha="center", va="center", fontsize=9, fontweight="bold")
+    dense.text(13.5, 47.5, "A1", ha="center", va="center", fontsize=9, fontweight="bold")
+    dense.text(40, 64, "B0", ha="center", va="center", fontsize=9, fontweight="bold")
+    dense.text(54, 64, "B1", ha="center", va="center", fontsize=9, fontweight="bold")
     for row in range(1, 2):
         yy = 57 + 21 * row / 2
         dense.plot([70, 83.5], [yy, yy], color=PURPLE, linewidth=0.7)
@@ -291,27 +295,33 @@ def scheduling_diagrams():
     # MXFP: packed operands and block scales are staged together for scaled MFMA.
     fig, mxfp = canvas(
         "MXFP scaled GEMM: operands and block scales move together",
-        "MXFP8 / MXFP4 values · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
+        "Shared Dense/BF16 HTI schedule · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
     )
-    grid_rect(mxfp, 3, 64, 14, 20, 4, 2, "#DCEAF5")
-    grid_rect(mxfp, 3, 38, 24, 14, 2, 4, "#DCEAF5")
+    grid_rect(mxfp, 3, 64, 14, 20, 2, 1, "#DCEAF5")
+    grid_rect(mxfp, 3, 38, 24, 14, 1, 2, "#DCEAF5")
     grid_rect(mxfp, 22, 64, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
     grid_rect(mxfp, 32, 38, 18, 7, 1, 4, "#E9E2F4", edge=PURPLE)
     mxfp.text(10, 86, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
     mxfp.text(15, 54, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
+    mxfp.text(10, 77, "A0", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(10, 69, "A1", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(9, 45, "B0", ha="center", va="center", fontsize=8.5, fontweight="bold")
+    mxfp.text(21, 45, "B1", ha="center", va="center", fontsize=8.5, fontweight="bold")
     mxfp.text(31, 60, "S_A [BM, BK/32]", ha="center", fontsize=9)
     mxfp.text(41, 34, "S_B [BN, BK/32]", ha="center", fontsize=9)
     box(mxfp, 55, 48, 16, 32, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
     box(mxfp, 76, 55, 11, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
-    grid_rect(mxfp, 91, 47, 8, 34, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
-    mxfp.text(95, 84, "C quadrant", ha="center", fontsize=10.5, fontweight="bold")
+    grid_rect(mxfp, 89, 48, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
+    mxfp.text(94, 83, "HTI C tile", ha="center", fontsize=10.5, fontweight="bold")
+    for x, y, label in [(91.5, 72, "C00"), (96.5, 72, "C01"), (91.5, 56, "C10"), (96.5, 56, "C11")]:
+        mxfp.text(x, y, label, ha="center", va="center", fontsize=7.5, fontweight="bold")
     for start, end in [
         ((17, 76), (55, 73)),
         ((40, 67.5), (55, 67)),
         ((27, 47), (55, 58)),
         ((50, 41.5), (55, 54)),
         ((71, 64), (76, 64)),
-        ((87, 64), (91, 64)),
+        ((87, 64), (89, 64)),
     ]:
         arrow(mxfp, start, end)
     box(mxfp, 12, 14, 24, 11, "Scale chunk t", fill="#E9E2F4", edge=PURPLE)
@@ -322,7 +332,7 @@ def scheduling_diagrams():
     mxfp.text(
         3,
         4,
-        "HTI derives chunk size from tile/workgroup geometry and reuses staged buffers.",
+        "Shared with Dense/BF16: C00–C11, wave layout, and K-pair prefetch · MXFP adds scale chunks.",
         fontsize=10,
     )
     save(fig, "flydsl-mxfp-gemm-scheduling")
@@ -330,13 +340,13 @@ def scheduling_diagrams():
     # Grouped GEMM: varying expert matrices are flattened into one persistent stream.
     fig, grouped = canvas(
         "Grouped GEMM: persistent tiles across experts",
-        "Aᵍ[M_g, K] × Bᵍ[K, N] · cumulative offsets define each expert's row range",
+        "Aᵍ[M_g, K] × Bᵍ[K, N] · cumulative offsets define row ranges · one N-tile column shown",
     )
     expert_specs = [
-        (5, 54, 17, 29, 4, "E0 · M₀"),
-        (29, 61, 17, 22, 3, "E1 · M₁"),
+        (5, 54, 17, 29, 3, "E0 · M₀"),
+        (29, 69, 17, 14, 1, "E1 · M₁"),
         (53, 79, 17, 2, 1, "E2 · M₂=0"),
-        (77, 48, 17, 35, 5, "E3 · M₃"),
+        (77, 61, 17, 22, 2, "E3 · M₃"),
     ]
     for x, y, width, height, rows_count, label in expert_specs:
         fill, edge = ("#E9EDF1", GRAY) if "M₂" in label else ("#DCEAF5", BLUE)
@@ -360,14 +370,14 @@ def scheduling_diagrams():
         bbox={"facecolor": "white", "edgecolor": "none", "pad": 2},
         zorder=4,
     )
-    for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E1·0"), (51, "E1·1"), (67, "E3·0"), (83, "E3·1")]:
+    for x, label in [(3, "E0·0"), (19, "E0·1"), (35, "E0·2"), (51, "E1·0"), (67, "E3·0"), (83, "E3·1")]:
         box(grouped, x, 29, 13, 9, label, fill="#FFF0EB", edge=ORANGE, size=9.5)
-    arrow(grouped, (13, 54), (10, 39))
-    arrow(grouped, (37, 60), (42, 39))
-    arrow(grouped, (85, 48), (88, 39))
-    box(grouped, 5, 12, 27, 9, "WG0: 0 → 3 → 6", fill="white", edge="#CBD5DF", size=9.5)
-    box(grouped, 37, 12, 27, 9, "WG1: 1 → 4 → 7", fill="white", edge="#CBD5DF", size=9.5)
-    box(grouped, 69, 12, 27, 9, "WG2: 2 → 5 → 8", fill="white", edge="#CBD5DF", size=9.5)
+    arrow(grouped, (13, 54), (26, 39))
+    arrow(grouped, (37, 69), (57.5, 39))
+    arrow(grouped, (85, 61), (89.5, 39))
+    box(grouped, 5, 12, 27, 9, "WG0: 0 → 3", fill="white", edge="#CBD5DF", size=9.5)
+    box(grouped, 37, 12, 27, 9, "WG1: 1 → 4", fill="white", edge="#CBD5DF", size=9.5)
+    box(grouped, 69, 12, 27, 9, "WG2: 2 → 5", fill="white", edge="#CBD5DF", size=9.5)
     grouped.text(3, 4, "Persistent workgroups cross expert boundaries; M₂=0 contributes no tiles.", fontsize=10)
     save(fig, "flydsl-grouped-gemm-scheduling")
 

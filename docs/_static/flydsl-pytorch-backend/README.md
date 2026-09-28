@@ -10,9 +10,9 @@ and rendering material. Regenerating the figures does not run a benchmark.
 The September 24 revision assumes a PyTorch build containing
 [MXFP scaled GEMM support, PR #196719](https://github.com/pytorch/pytorch/pull/196719).
 The article treats that PR as landed. Support and usage were checked against
-commit `e297267ba4a23ee9e14d35d12145d7deb4d8fcd1`; the MXFP operator table uses
-the final numbers published in the benchmark comment last edited on
-September 20.
+PyTorch `main` at commit `2e9b4aff8d49b22bbebf288ccbf63983c51e45f0`;
+the MXFP operator table uses the final numbers published in the benchmark
+comment last edited on September 20.
 
 The MXFP implementation and tests cover NN, NT, TN, and TT layouts, with
 layout-dependent alignment checks. Both formats require logical `K` to be a

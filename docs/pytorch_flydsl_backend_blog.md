@@ -111,9 +111,10 @@ autotune among narrower full-tile and HTI configurations.
 
 ![Dense GEMM tile mapping from A and B tiles to four half-tile-interleaved C quadrants](_static/flydsl-pytorch-backend/flydsl-dense-gemm-scheduling.png)
 
-*Figure 2. Dense GEMM tiled scheduling. A `BM × BK` tile and a `BK × BN` tile
-produce a `BM × BN` output tile. The large-shape HTI example keeps four output
-quadrants resident while MFMA consumes one K-tile pair and loads the next.*
+*Figure 2. Dense GEMM tiled scheduling. HTI splits A along M into `A0/A1` and B
+along N into `B0/B1`, producing four C quadrants—not a 4 × 4 C grid. The same
+eight waves form a 2 × 4 mapping inside each quadrant and are reused across
+`C00`–`C11` while the next K-tile pair is prefetched.*
 
 Across 15 BF16 NT shapes, FlyDSL delivers a **1.10x geometric-mean speedup over
 the faster ATen/Triton baseline at each shape**. Gains are strongest in smaller
@@ -143,17 +144,19 @@ small block of elements. They reduce operand storage while allowing matrix
 multiplication to accumulate in FP32. FlyDSL's MXFP8 and MXFP4 support makes
 these kernels available to quantized workloads through `torch.compile`.
 
-The scaled-GEMM kernel feeds packed MXFP8/MXFP4 operands and E8M0 block scales
-directly into CDNA4 scaled MFMA instructions, avoiding full-precision operand
-materialization. Scales are staged through LDS alongside A and B; the HTI path
-derives its scale-chunk size from the tile and workgroup geometry and cycles
-those chunks through staged buffers.
+MXFP is a specialization of the same gfx950 GEMM scheduler rather than an
+independent schedule: it reuses the Dense/BF16 tile configurations, wave layout,
+full-tile/HTI choice, four resident C quadrants, and K-pair prefetch pipeline.
+Its additions are packed MXFP8/MXFP4 operand layouts, E8M0 scales staged through
+LDS with A/B, and CDNA4 scaled MFMA instructions. For HTI, the scale-chunk length
+is derived from the tile and workgroup geometry and cycled through the staged
+buffers.
 
 ![MXFP scaled GEMM stages packed operands and E8M0 block scales together before scaled MFMA](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-scheduling.png)
 
-*Figure 4. MXFP scaled-GEMM scheduling. Packed A/B tiles and their E8M0 block
-scales are staged together in LDS and consumed by scaled MFMA. HTI cycles
-scale chunks through the same staged pipeline.*
+*Figure 4. MXFP scaled-GEMM scheduling. The C-quadrant and K-pair schedule is
+shared with Dense/BF16. MXFP adds packed A/B values, E8M0 scale chunks staged in
+the same LDS pipeline, and scaled MFMA.*
 
 In the published September 20 measurements on MI355X, the 17-shape NT suite
 shows a **1.58x geometric-mean speedup for MXFP8 over ATen** and a **1.68x
@@ -187,9 +190,10 @@ available to autotuning.
 
 ![Grouped GEMM flattens tiled expert matrices into one persistent global work stream](_static/flydsl-pytorch-backend/flydsl-grouped-gemm-scheduling.png)
 
-*Figure 6. Grouped-GEMM scheduling. Per-expert matrices with different `M_g`
-produce one global tile stream. Persistent workgroups stride across that stream,
-cross expert boundaries, and naturally skip experts with zero rows.*
+*Figure 6. Grouped-GEMM scheduling. One N-tile column is shown: experts contribute
+`ceil(M_g / BM)` tiles to a cumulative stream, while a zero-row expert
+contributes none. Persistent workgroups start at `blockIdx.x` and advance by the
+grid size, so they can cross expert boundaries without launching per expert.*
 
 The 24 reported cases are divided by the workload dimension being tested. In a
 uniform shape `G × M × K × N`, `G` is the number of experts, `M` is the token
