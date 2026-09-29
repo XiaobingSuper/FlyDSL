@@ -496,7 +496,7 @@ layout.
 The next steps extend the range of workloads that can benefit from FlyDSL:
 
 - **Broader hardware coverage:** extend the PyTorch integration and optimized
-  kernel set to AMD Instinct MI450 and MI455 GPUs.
+  kernel set to AMD Instinct MI450 Series GPUs.
 - **More low-precision workloads and attention:** add MXFP8 grouped GEMM and
   FlexAttention kernels for more inference workloads.
 - **Fusion and training:** support GEMM epilogue fusion and broader backward
