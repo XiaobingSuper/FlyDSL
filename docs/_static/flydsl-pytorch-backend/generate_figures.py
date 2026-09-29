@@ -347,19 +347,19 @@ def scheduling_diagrams():
     mxfp.text(
         50,
         27,
-        "Temporal schedule for the same HTI C tile: two rings, different lifetimes",
+        "Same C00 → C01 → C10 → C11 order as Dense; data and scales have separate lifetimes",
         ha="center",
-        fontsize=10.5,
+        fontsize=9.8,
     )
     arrow(mxfp, (94, 42), (94, 30))
     mxfp.text(95.5, 35, "advance K", fontsize=8.5, color="#526477", ha="right")
     box(mxfp, 3, 15, 17, 9, "A/B tile ring", fill="#EDF3F8", edge=BLUE, bold=True)
-    box(mxfp, 24, 15, 29, 9, "stage = k_tile % 2", fill="#FFF0EB", edge=ORANGE)
-    box(mxfp, 63, 15, 34, 9, "S0/S1: current pair → pair + 2", fill="#EDF3F8", edge=BLUE)
+    box(mxfp, 24, 15, 29, 9, "K pair: C00 → C01 → C10 → C11", fill="#FFF0EB", edge=ORANGE, size=9)
+    box(mxfp, 63, 15, 34, 9, "after last use: refill pair + 2", fill="#EDF3F8", edge=BLUE, size=9.5)
     arrow(mxfp, (53, 19.5), (63, 19.5))
     box(mxfp, 3, 3, 17, 9, "Scale chunk ring", fill="#E9E2F4", edge=PURPLE, bold=True)
-    box(mxfp, 24, 3, 29, 9, "slot = (k/chunk_tiles) % 2", fill="#E9E2F4", edge=PURPLE)
-    box(mxfp, 63, 3, 34, 9, "slot 0 current → slot 1 prefetch", fill="#E9E2F4", edge=PURPLE)
+    box(mxfp, 24, 3, 29, 9, "slot = (k/chunk_tiles) % 2", fill="#E9E2F4", edge=PURPLE, size=9)
+    box(mxfp, 63, 3, 34, 9, "keep current scales; prefetch next chunk", fill="#E9E2F4", edge=PURPLE, size=9)
     arrow(mxfp, (53, 7.5), (63, 7.5))
     save(fig, "flydsl-mxfp-gemm-hti-pipeline")
 

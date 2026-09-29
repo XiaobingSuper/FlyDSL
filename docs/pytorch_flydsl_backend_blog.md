@@ -199,8 +199,9 @@ scale-chunk ring shown below is specific to HTI.
 
 *Figure 4. MXFP scaled-GEMM scheduling. The C-quadrant and K-pair schedule is
 shared with Dense/BF16. MXFP adds packed A/B values, E8M0 scale chunks, and
-scaled MFMA, with separate ping-pong loops for per-tile A/B stages and
-multi-tile scale chunks.*
+scaled MFMA. The A/B ring follows the same quadrant consumer order and refills
+after the last data consumer; the scale ring retains matching scales until
+those consumers finish, then prefetches the next chunk.*
 
 In the published September 20 measurements on MI355X, the 17-shape NT suite
 shows a **1.58x geometric-mean speedup for MXFP8 over ATen** and a **1.68x
