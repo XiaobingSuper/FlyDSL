@@ -174,8 +174,8 @@ geometric mean relative to ATen.*
 FlyDSL exceeds ATen throughput in every reported case for both formats.
 MXFP8 speedups range from **1.31x to 2.23x**, with the largest gain at
 `32 × 4096 × 4096`. MXFP4 ranges from **1.31x to 2.96x**, peaking at
-`32 × 14336 × 4096`. The integrated MXFP autotuning path chooses between ATen
-and FlyDSL for each eligible workload. The measurements cover NT layout.
+`32 × 14336 × 4096`. The MXFP autotuning path benchmarks FlyDSL alongside ATen
+when both backends are enabled and applicable. The measurements cover NT layout.
 
 ### Grouped GEMM: Uneven Work Across Experts
 
