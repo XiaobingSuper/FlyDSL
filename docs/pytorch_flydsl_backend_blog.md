@@ -104,16 +104,14 @@ can use the other enabled backends.
 ## Kernel-Level Performance
 
 The following operator-level benchmarks compare execution on AMD `gfx950` GPUs.
-The dense source identifies MI355, the MXFP, RMSNorm, and TopK sources identify
-MI355X, and the grouped GEMM source identifies `gfx950`. The suites use separate
-measurement setups: dense GEMM uses graph replay, grouped GEMM reports
-steady-state throughput, and RMSNorm and TopK use GPU-event timing. The MXFP
-source reports TFLOP/s but not the timing protocol, benchmark output dtype, or
-complete software stack. Compilation, first-call autotuning, and end-to-end
-latency are excluded; MXFP also starts from already quantized operands. A speedup
-above 1.0 means FlyDSL is faster than the named baseline, and geometric means
-weight sampled cases equally. Each figure and caption identifies its comparison
-baseline and aggregation scope.
+The suites use separate measurement setups: dense GEMM uses graph replay,
+grouped GEMM reports steady-state throughput, and RMSNorm and TopK use GPU-event
+timing. The MXFP source reports TFLOP/s but not the timing protocol, benchmark
+output dtype, or complete software stack. Compilation, first-call autotuning,
+and end-to-end latency are excluded; MXFP also starts from already quantized
+operands. A speedup above 1.0 means FlyDSL is faster than the named baseline, and
+geometric means weight sampled cases equally. Each figure and caption identifies
+its comparison baseline and aggregation scope.
 
 ### Dense GEMM: Linear-Layer Workloads
 
