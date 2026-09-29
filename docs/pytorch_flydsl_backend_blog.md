@@ -144,33 +144,24 @@ performance depending on the workload.
 
 ### MXFP Scaled GEMM: Extending to Low-Precision Workloads
 
-Microscaled formats combine low-precision values with a shared scale for each
-small block of elements. They reduce operand storage while allowing matrix
-multiplication to accumulate in FP32. FlyDSL's MXFP8 and MXFP4 support makes
-these kernels available to quantized workloads through `torch.compile`.
+MXFP extends the shared gfx950 full-tile and HTI GEMM implementations with
+FP8 operand handling, packed FP4 storage, E8M0 scale staging, and CDNA4 scaled
+MFMA.
 
-MXFP is a specialization of the same gfx950 GEMM scheduler rather than an
-independent schedule: it reuses the Dense/BF16 tile configurations, wave layout,
-full-tile/HTI choice, four resident C quadrants, and K-pair prefetch pipeline.
-Its additions are packed MXFP8/MXFP4 operand layouts, E8M0 scales staged through
-LDS with A/B, and CDNA4 scaled MFMA instructions. For HTI, the scale-chunk length
-is derived from the tile and workgroup geometry and cycled through the staged
-buffers. A/B stages ping-pong per K tile, whereas scale slots ping-pong per
-multi-tile chunk; data and scale fragments are read together before either slot
-can be recycled. For the common `256 × 256` HTI configurations this gives four
-K tiles per MXFP8 scale chunk (`BK=128`) and two per MXFP4 chunk (`BK=256`);
-the implementation derives the value rather than treating it as a universal
-constant. In the full-tile MXFP path, `scale_chunk_tiles=1`: scales occupy the
-same configurable `STAGES`-deep per-stage ring as A/B. The separate multi-tile
-scale-chunk ring shown below is specific to HTI.
+In HTI, A/B buffers advance by K tile, while separate scale slots hold chunks
+spanning multiple K tiles. Each MFMA uses register-resident operands and the
+matching scales for its K position. At chunk boundaries, waits and barriers
+coordinate reuse of the other scale slot to prefetch the next chunk while
+the current chunk is consumed. Chunk length depends on tile and workgroup
+geometry; the four-tile chunk below is an example, not a fixed format
+requirement. The full-tile path instead stages each K tile's scales in separate
+LDS buffers using the same stage index as A/B.
 
-![MXFP scaled GEMM uses independent operand-stage and scale-chunk rings](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-hti-pipeline.png)
+![MXFP HTI operand and scale buffers feeding scaled MFMA, with distinct read-slot sequences](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-hti-pipeline.png)
 
-*Figure 4. MXFP scaled-GEMM scheduling. The C-quadrant and K-pair schedule is
-shared with Dense/BF16. MXFP adds packed A/B values, E8M0 scale chunks, and
-scaled MFMA. The A/B ring follows the same quadrant consumer order and refills
-after the last data consumer; the scale ring retains matching scales until
-those consumers finish, then prefetches the next chunk.*
+*Figure 4. MXFP HTI buffering, shown with four K tiles per scale chunk. A/B
+read slots alternate per tile; scale read slots alternate per chunk. The next
+scale chunk is prefetched into the other slot at each chunk boundary.*
 
 On MI355X, the 17-shape NT suite shows a **1.58x geometric-mean speedup for
 MXFP8 over ATen** and a **1.68x speedup for MXFP4 over ATen**.

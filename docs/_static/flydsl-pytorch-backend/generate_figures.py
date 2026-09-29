@@ -308,59 +308,57 @@ def scheduling_diagrams():
     arrow(dense, (54, 9.5), (62, 9.5))
     save(fig, "flydsl-dense-gemm-hti-pipeline")
 
-    # MXFP: packed operands and block scales are staged together for scaled MFMA.
+    # MXFP HTI: distinct operand/scale reuse periods, matching slices at MFMA.
     fig, mxfp = canvas(
-        "MXFP scaled GEMM: operands and block scales move together",
-        "Shared Dense/BF16 HTI schedule · E8M0 scale per 32 K elements · CDNA4 scaled MFMA",
+        "MXFP HTI: separate operand and scale buffering",
+        "Matching K positions feed scaled MFMA · chunk length depends on tile and workgroup geometry",
     )
-    grid_rect(mxfp, 3, 58, 14, 20, 2, 1, "#DCEAF5")
-    grid_rect(mxfp, 3, 32, 24, 14, 1, 2, "#DCEAF5")
-    grid_rect(mxfp, 22, 57, 18, 12, 2, 4, "#E9E2F4", edge=PURPLE)
-    grid_rect(mxfp, 32, 30, 18, 12, 2, 4, "#E9E2F4", edge=PURPLE)
-    mxfp.text(10, 80, "Packed A", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(15, 48, "Packed B", ha="center", fontsize=10.5, fontweight="bold")
-    mxfp.text(10, 71, "A0", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(10, 63, "A1", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(9, 39, "B0", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(21, 39, "B1", ha="center", va="center", fontsize=8.5, fontweight="bold")
-    mxfp.text(2.5, 68, "BM", ha="right", va="center", fontsize=9)
-    mxfp.text(10, 54, "BK", ha="center", fontsize=9)
-    mxfp.text(2.5, 39, "BK", ha="right", va="center", fontsize=9)
-    mxfp.text(15, 28, "BN", ha="center", fontsize=9)
-    mxfp.text(31, 53, "S_A [BM, BK/32]", ha="center", fontsize=9)
-    mxfp.text(41, 44, "S_B [BN, BK/32]", ha="center", fontsize=9)
-    box(mxfp, 55, 42, 16, 32, "Staged LDS\nA / B\n+ scale chunk", fill="#FFF7E8", edge="#D9A441", bold=True)
-    box(mxfp, 76, 49, 11, 18, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, bold=True)
-    grid_rect(mxfp, 89, 42, 10, 32, 2, 2, "#FDE2DA", edge=ORANGE, linewidth=1.4)
-    mxfp.text(94, 77, "HTI C tile", ha="center", fontsize=10.5, fontweight="bold")
-    for x, y, label in [(91.5, 66, "C00"), (96.5, 66, "C01"), (91.5, 50, "C10"), (96.5, 50, "C11")]:
-        mxfp.text(x, y, label, ha="center", va="center", fontsize=7.5, fontweight="bold")
+    box(mxfp, 4, 71, 22, 12, "A/B LDS\nFP8 / packed FP4", fill="#DCEAF5", edge=BLUE, size=11, bold=True)
+    box(mxfp, 4, 53, 22, 12, "Scale LDS\nE8M0 chunks", fill="#E9E2F4", edge=PURPLE, size=11, bold=True)
+    box(mxfp, 39, 62, 22, 14, "Registers\nmatching K slices", fill="#FFF7E8", edge="#D9A441", size=11)
+    box(mxfp, 68, 62, 12, 14, "Scaled\nMFMA", fill="#FFF0EB", edge=ORANGE, size=11, bold=True)
+    box(mxfp, 87, 62, 10, 14, "FP32\naccum.", fill="#FDE2DA", edge=ORANGE, size=10.5, bold=True)
     for start, end in [
-        ((17, 75), (55, 70)),
-        ((40, 63), (55, 64)),
-        ((27, 45), (55, 54)),
-        ((50, 36), (55, 47)),
-        ((71, 58), (76, 58)),
-        ((87, 58), (89, 58)),
+        ((26, 77), (39, 72)),
+        ((26, 59), (39, 66)),
+        ((61, 69), (68, 69)),
+        ((80, 69), (87, 69)),
     ]:
         arrow(mxfp, start, end)
+
+    mxfp.plot([4, 97], [49, 49], color=GRID, linewidth=0.8)
+    mxfp.text(4, 45, "Read-slot example · 4 K tiles per chunk", fontsize=11, fontweight="bold")
+    mxfp.text(97, 45, "Logical K order, not a timing trace", fontsize=9.5, color="#526477", ha="right")
+    x0, step = 20, 6.25
+    mxfp.text(4, 40, "K tile", fontsize=10, va="center")
+    mxfp.text(4, 33.5, "A/B slot", fontsize=10, va="center", fontweight="bold", color=BLUE)
+    mxfp.text(4, 24, "Scale slot", fontsize=10, va="center", fontweight="bold", color=PURPLE)
+    mxfp.text(4, 13, "Prefetch", fontsize=10, va="center", fontweight="bold", color=PURPLE)
+    for tile in range(12):
+        x = x0 + tile * step
+        mxfp.text(x + 3, 40, str(tile), fontsize=10, ha="center", va="center")
+        box(
+            mxfp, x, 30, 6, 7, str(tile % 2),
+            fill="#DCEAF5" if tile % 2 == 0 else "#EDF3F8", edge=BLUE, size=11,
+        )
+    for chunk in range(3):
+        x = x0 + chunk * 4 * step
+        slot = chunk % 2
+        lo, hi = chunk * 4, chunk * 4 + 3
+        box(
+            mxfp, x, 20.5, 24.75, 7, f"slot {slot} · tiles {lo}–{hi}",
+            fill="#E9E2F4" if slot == 0 else "#F4F0F9", edge=PURPLE, size=10.5,
+        )
+        box(
+            mxfp, x, 10, 24.75, 6, f"{lo + 4}–{hi + 4} → slot {1 - slot}",
+            fill="#F4F0F9", edge=PURPLE, size=10.5,
+        )
+        arrow(mxfp, (x + 3, 20), (x + 3, 16.5))
     mxfp.text(
-        50,
-        27,
-        "Same C00 → C01 → C10 → C11 order as Dense; data and scales have separate lifetimes",
-        ha="center",
-        fontsize=9.8,
+        50, 4,
+        "At each chunk start: read current scales; prefetch the next chunk into the other slot.",
+        fontsize=10.5, ha="center",
     )
-    arrow(mxfp, (94, 42), (94, 30))
-    mxfp.text(95.5, 35, "advance K", fontsize=8.5, color="#526477", ha="right")
-    box(mxfp, 3, 15, 17, 9, "A/B tile ring", fill="#EDF3F8", edge=BLUE, bold=True)
-    box(mxfp, 24, 15, 29, 9, "K pair: C00 → C01 → C10 → C11", fill="#FFF0EB", edge=ORANGE, size=9)
-    box(mxfp, 63, 15, 34, 9, "after last use: refill pair + 2", fill="#EDF3F8", edge=BLUE, size=9.5)
-    arrow(mxfp, (53, 19.5), (63, 19.5))
-    box(mxfp, 3, 3, 17, 9, "Scale chunk ring", fill="#E9E2F4", edge=PURPLE, bold=True)
-    box(mxfp, 24, 3, 29, 9, "slot = (k/chunk_tiles) % 2", fill="#E9E2F4", edge=PURPLE, size=9)
-    box(mxfp, 63, 3, 34, 9, "keep current scales; prefetch next chunk", fill="#E9E2F4", edge=PURPLE, size=9)
-    arrow(mxfp, (53, 7.5), (63, 7.5))
     save(fig, "flydsl-mxfp-gemm-hti-pipeline")
 
     # Grouped GEMM: varying expert matrices are flattened into one persistent stream.
