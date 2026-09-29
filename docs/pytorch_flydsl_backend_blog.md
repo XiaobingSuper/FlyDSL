@@ -115,12 +115,11 @@ For large GEMMs, the tuned HTI configurations use a 256 × 256 output tile and a
 
 HTI processes consecutive K tiles in pairs using two LDS stages. In steady state, prefetches progressively reuse the stages holding `t` and `t+1` for `t+2` and `t+3`. Reuse occurs half by half: once the required reads of an operand half’s old LDS contents are complete and synchronization requirements are met, its region can be refilled while matrix fused multiply-add (MFMA) computation continues on register-resident fragments. A phase-shifted barrier schedule staggers two four-wave groups, overlapping MFMA work in one group with operand loading and asynchronous prefetching in the other. Both groups alternate between these activities, combining half-tile buffer reuse with staggered execution rather than waiting for an entire tile’s computation to finish.
 
-![Dense GEMM tile mapping and two-stage HTI ring buffer](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
+![HTI tile decomposition, MFMA wave scope, and phase-staggered loading and computation](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
 
-*Figure 2. Dense GEMM tiled scheduling. HTI splits A and B into halves, then the
-same eight waves update `C00`–`C11` for each K tile. Stage 0 and stage 1 hold
-consecutive tiles; after the second use of an A/B half, that region is recycled
-for the tile two positions ahead.*
+*Figure 2. HTI wave scope and phase-staggered execution, shown with two groups
+of four Wave64 waves. Each grid cell is a 16 × 16 output block. Waves per group
+are tunable with the tile configuration, subject to kernel constraints.*
 
 Across 15 BF16 NT shapes, FlyDSL delivers a **1.10x geometric-mean speedup over
 the faster ATen/Triton baseline at each shape**. Gains are strongest in smaller
