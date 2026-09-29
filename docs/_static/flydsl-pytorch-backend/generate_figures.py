@@ -190,8 +190,8 @@ def architecture():
     arrow((74, 28), (74, 14))
 
     box(18, 4, 64, 10, fill="#EDF3F8", edge=BLUE)
-    label(50, 9, "AMD MI350-series GPU (gfx950)", size=15, bold=True)
-    save(fig, "flydsl-pytorch-architecture")
+    label(50, 9, "AMD GPU", size=15, bold=True)
+    save(fig, "flydsl-pytorch-integration")
 
 
 def scheduling_diagrams():

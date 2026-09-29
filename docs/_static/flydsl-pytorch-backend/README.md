@@ -26,9 +26,10 @@ current requirements.
 
 ## Architecture overview
 
-The diagram follows an application through two execution modes on AMD
-MI350-series GPUs. It assumes the optional FlyDSL package is installed and the
-compiled GEMM path has FlyDSL and autotuning enabled:
+The diagram follows an application through two execution modes on an AMD GPU
+and intentionally leaves hardware support gates to the article's feature table.
+It assumes the optional FlyDSL package is installed and the compiled GEMM path
+has FlyDSL and autotuning enabled:
 
 - Eager RMSNorm and TopK dispatch to FlyDSL for eligible inputs and retain ATen
   for unsupported inputs.

@@ -24,22 +24,20 @@ Unsupported inputs retain existing PyTorch implementations.
 
 ## Why FlyDSL as a PyTorch Backend
 
-GPU DSLs make different abstraction tradeoffs. A block-oriented DSL such as
-[Triton](https://github.com/triton-lang/triton) provides a productive model for
-broad kernel coverage and compiler-managed mapping. FlyDSL instead keeps the
-hierarchy explicit: layout algebra and coordinate mapping, block/wave/thread
-partitioning, tiled copies and MFMA atoms, LDS swizzles and staging, and
-synchronization or scheduling boundaries. It is not a universal replacement for
-Triton; it is an additional option for architecture-tuned templates where exact
-data movement and instruction mapping matter.
+GPU DSLs choose different abstraction levels. The block-tensor programming model
+in [Triton](https://github.com/triton-lang/triton) lets authors describe
+program-level tiles while the compiler manages much of the thread, wave, and
+instruction mapping. FlyDSL makes those mappings explicit through layout
+algebra: kernel authors can partition tiles across blocks, waves, threads, and
+values; select tiled-copy and MFMA atoms; define LDS swizzles and staging; and
+place synchronization or compiler-scheduling boundaries. The two approaches are
+complementary. FlyDSL is useful for architecture-specific templates where data
+movement and instruction ownership are part of the algorithm.
 
-That distinction is visible in the kernels in this article. Dense GEMM uses
-half-tile interleaving and a staged LDS ring; MXFP binds packed operands to
-block-scale lifetimes and scaled MFMA; Grouped GEMM adds persistent scheduling
-across uneven experts. FlyDSL expresses these choices in Python and lowers them
-through an MLIR-native compiler stack, allowing one template family to specialize
-for dtype, layout, tile shape, and GPU architecture without hiding the hardware
-mapping.
+These controls appear directly in the kernels: HTI and staged LDS in Dense/MXFP
+GEMM, matched operand-scale lifetimes and scaled MFMA in MXFP, and persistent
+expert scheduling in Grouped GEMM. FlyDSL expresses them in Python and lowers
+them through MLIR while preserving explicit hardware mapping.
 
 PyTorch turns those specialized templates into an additive, measurable backend.
 Unsupported workloads retain existing implementations:
@@ -50,7 +48,7 @@ Unsupported workloads retain existing implementations:
   GEMM candidates, benchmarks FlyDSL beside ATen and Triton where supported,
   caches the winner for each workload, and runs the fastest measured kernel.
 
-![PyTorch APIs feed two execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; torch.compile benchmarks eligible implementations of dense, grouped, and MXFP8/MXFP4 scaled GEMM and runs the fastest on an AMD MI350-series GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-architecture.png)
+![PyTorch APIs feed two execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; torch.compile benchmarks eligible implementations of dense, grouped, and MXFP8/MXFP4 scaled GEMM and runs the fastest on an AMD GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-integration.png)
 
 *Figure 1. FlyDSL in PyTorch, with the optional package installed and FlyDSL
 enabled for GEMM autotuning. Eager execution dispatches by input support;
