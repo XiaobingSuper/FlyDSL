@@ -2,14 +2,16 @@
 
 PyTorch users on AMD MI350-series GPUs can now use
 [FlyDSL](https://github.com/ROCm/FlyDSL) through existing operator APIs for
-dense and grouped GEMM, MXFP8/MXFP4 scaled GEMM, RMSNorm, and TopK. The optional
-backend covers both eager execution and `torch.compile` without requiring
-applications to call custom kernels.
+dense and grouped GEMM, MXFP8/MXFP4 scaled GEMM, RMSNorm, and TopK, without
+requiring applications to call custom kernels. The optional backend supports
+GEMMs through `torch.compile`, while eligible RMSNorm and TopK calls dispatch
+automatically in eager mode when it is available and enabled.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for the 15-shape BF16 dense-GEMM suite over the faster
-ATen/Triton baseline**,
-**1.58x and 1.68x geometric means over ATen across 17 shapes per MXFP format**,
+of ATen and Triton at each shape**,
+**1.58x and 1.68x geometric-mean speedups for MXFP8 and MXFP4, respectively,
+over ATen across 17 shapes per format**,
 **1.20x geometric mean over Triton across all 24 grouped-GEMM cases**, and
 **1.17x–3.66x over ATen across the 22 RMSNorm cases**. For the 10 small-K TopK
 cases, the geometric mean is **4.82x over ATen** with deterministic algorithms
@@ -103,54 +105,23 @@ can use the other enabled backends.
 
 ## Kernel-Level Performance
 
-The following operator-level benchmarks compare execution on AMD `gfx950` GPUs.
-The suites use separate measurement setups: dense GEMM uses graph replay,
-grouped GEMM reports steady-state throughput, and RMSNorm and TopK use GPU-event
-timing. The MXFP source reports TFLOP/s but not the timing protocol, benchmark
-output dtype, or complete software stack. Compilation, first-call autotuning,
-and end-to-end latency are excluded; MXFP also starts from already quantized
-operands. A speedup above 1.0 means FlyDSL is faster than the named baseline, and
-geometric means weight sampled cases equally. Each figure and caption identifies
-its comparison baseline and aggregation scope.
+The following operator-level benchmarks were measured on AMD Instinct MI355X (`gfx950`) GPUs. The suites use different benchmark setups: dense GEMM uses GPU-event timing of graph replay, grouped GEMM reports steady-state throughput, and RMSNorm and TopK use GPU-event timing of repeated operator calls. The results focus on steady-state operator execution, excluding compilation and initial autotuning; they do not represent end-to-end model latency. MXFP measurements start from already quantized operands, so input quantization is outside the timed region. A speedup above 1.0 means FlyDSL is faster than the named baseline, and geometric means give equal weight to each sampled case. Each figure and caption specifies its baseline and aggregation scope.
 
 ### Dense GEMM: Linear-Layer Workloads
 
-Dense matrix multiplication is a building block of transformer projection and
-feed-forward layers. Its dimensions vary substantially with the number of tokens
-being processed, making performance across a range of shapes relevant to model
-developers.
+Dense matrix multiplication is a building block of transformer projection and feed-forward layers. Its dimensions vary substantially with the number of tokens being processed, making performance across a range of shapes relevant to model developers.
 
-For large GEMMs, the kernel uses a `256 × 256` output tile computed by an
-eight-wave workgroup (Wave64, 512 threads total)—two waves along M and four
-along N. Its half-tile interleaved (HTI) schedule keeps four output quadrants in
-registers while interleaving two K tiles of global-to-local-data-share (LDS)
-loads with matrix fused multiply-add (MFMA) computation. Smaller shapes can
-autotune among narrower full-tile and HTI configurations.
+FlyDSL provides full-tile and half-tile interleaved (HTI) execution paths. The full-tile path uses a configurable `STAGES`-deep K-tile ring in local data share (LDS). Its prologue primes the ring, the steady-state loop overlaps computation on staged data with asynchronous prefetches into reusable slots, and the final iterations drain the remaining stages. For a step-by-step explanation of this producer/consumer pattern and its wait semantics, see AMD’s [Multi-Stage LDS Pipeline: Keep K Blocks in Flight](https://rocm.blogs.amd.com/software-tools-optimization/accelerating-llm-inference-on-amd-gpus-with-low-latency-gemms/README.html#multi-stage-lds-pipeline-keep-k-blocks-in-flight).
 
-The full-tile path uses a configurable `STAGES`-deep K-tile ring. Its prologue
-fills the ring, the steady-state loop consumes one LDS stage while refilling the
-oldest slot with a future K tile, and the epilogue drains the remaining stages.
-HTI specializes this pattern to two stages and recycles individual A/B halves
-only after their second quadrant consumer.
+For large GEMMs, the tuned HTI configurations use a 256 × 256 output tile and an eight-wave workgroup (512 threads with Wave64). HTI splits A along M and B along N, maintaining four 128 × 128 output-quadrant accumulators in registers. Within each K tile, `A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1` feeds `C01/C11`. Smaller shapes can autotune among narrower full-tile and HTI configurations.
 
-For a step-by-step explanation of the producer/consumer ring and its wait
-semantics, see AMD's
-[Multi-Stage LDS Pipeline: Keep K Blocks in Flight](https://rocm.blogs.amd.com/software-tools-optimization/accelerating-llm-inference-on-amd-gpus-with-low-latency-gemms/README.html#multi-stage-lds-pipeline-keep-k-blocks-in-flight).
-The FlyDSL GEMM schedule here adopts the same multi-stage LDS producer/consumer
-concept.
+HTI processes consecutive K tiles in pairs using two LDS stages. In steady state, prefetches progressively reuse the stages holding `t` and `t+1` for `t+2` and `t+3`. Reuse occurs half by half: once the required reads of an operand half’s old LDS contents are complete and synchronization requirements are met, its region can be refilled while matrix fused multiply-add (MFMA) computation continues on register-resident fragments. A phase-shifted barrier schedule staggers two four-wave groups, overlapping MFMA work in one group with operand loading and asynchronous prefetching in the other. Both groups alternate between these activities, combining half-tile buffer reuse with staggered execution rather than waiting for an entire tile’s computation to finish.
 
-HTI starts with K tile `t` in stage 0 and `t+1` in stage 1. Within one tile,
-`A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1`
-feeds `C01/C11`. After a half has served both consumers, its LDS region can be
-refilled: stage 0 receives `t+2` while stage 1 is consumed, then stage 1 receives
-`t+3`. The two stages alternate in this way across K.
+![HTI tile decomposition, MFMA wave scope, and phase-staggered loading and computation](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
 
-![Dense GEMM tile mapping and two-stage HTI ring buffer](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
-
-*Figure 2. Dense GEMM tiled scheduling. HTI splits A and B into halves, then the
-same eight waves update `C00`–`C11` for each K tile. Stage 0 and stage 1 hold
-consecutive tiles; after the second use of an A/B half, that region is recycled
-for the tile two positions ahead.*
+*Figure 2. HTI wave scope and phase-staggered execution, shown with two groups
+of four Wave64 waves. Each grid cell is a 16 × 16 output block. Waves per group
+are tunable with the tile configuration, subject to kernel constraints.*
 
 Across 15 BF16 NT shapes, FlyDSL delivers a **1.10x geometric-mean speedup over
 the faster ATen/Triton baseline at each shape**. Gains are strongest in smaller
@@ -175,33 +146,24 @@ performance depending on the workload.
 
 ### MXFP Scaled GEMM: Extending to Low-Precision Workloads
 
-Microscaled formats combine low-precision values with a shared scale for each
-small block of elements. They reduce operand storage while allowing matrix
-multiplication to accumulate in FP32. FlyDSL's MXFP8 and MXFP4 support makes
-these kernels available to quantized workloads through `torch.compile`.
+MXFP extends the shared gfx950 full-tile and HTI GEMM implementations with
+FP8 operand handling, packed FP4 storage, E8M0 scale staging, and CDNA4 scaled
+MFMA.
 
-MXFP is a specialization of the same gfx950 GEMM scheduler rather than an
-independent schedule: it reuses the Dense/BF16 tile configurations, wave layout,
-full-tile/HTI choice, four resident C quadrants, and K-pair prefetch pipeline.
-Its additions are packed MXFP8/MXFP4 operand layouts, E8M0 scales staged through
-LDS with A/B, and CDNA4 scaled MFMA instructions. For HTI, the scale-chunk length
-is derived from the tile and workgroup geometry and cycled through the staged
-buffers. A/B stages ping-pong per K tile, whereas scale slots ping-pong per
-multi-tile chunk; data and scale fragments are read together before either slot
-can be recycled. For the common `256 × 256` HTI configurations this gives four
-K tiles per MXFP8 scale chunk (`BK=128`) and two per MXFP4 chunk (`BK=256`);
-the implementation derives the value rather than treating it as a universal
-constant. In the full-tile MXFP path, `scale_chunk_tiles=1`: scales occupy the
-same configurable `STAGES`-deep per-stage ring as A/B. The separate multi-tile
-scale-chunk ring shown below is specific to HTI.
+In HTI, A/B buffers advance by K tile, while separate scale slots hold chunks
+spanning multiple K tiles. Each MFMA uses register-resident operands and the
+matching scales for its K position. At chunk boundaries, waits and barriers
+coordinate reuse of the other scale slot to prefetch the next chunk while
+the current chunk is consumed. Chunk length depends on tile and workgroup
+geometry; the four-tile chunk below is an example, not a fixed format
+requirement. The full-tile path instead stages each K tile's scales in separate
+LDS buffers using the same stage index as A/B.
 
-![MXFP scaled GEMM uses independent operand-stage and scale-chunk rings](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-hti-pipeline.png)
+![MXFP HTI operand and scale buffers feeding scaled MFMA, with distinct read-slot sequences](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-hti-pipeline.png)
 
-*Figure 4. MXFP scaled-GEMM scheduling. The C-quadrant and K-pair schedule is
-shared with Dense/BF16. MXFP adds packed A/B values, E8M0 scale chunks, and
-scaled MFMA. The A/B ring follows the same quadrant consumer order and refills
-after the last data consumer; the scale ring retains matching scales until
-those consumers finish, then prefetches the next chunk.*
+*Figure 4. MXFP HTI buffering, shown with four K tiles per scale chunk. A/B
+read slots alternate per tile; scale read slots alternate per chunk. The next
+scale chunk is prefetched into the other slot at each chunk boundary.*
 
 On MI355X, the 17-shape NT suite shows a **1.58x geometric-mean speedup for
 MXFP8 over ATen** and a **1.68x speedup for MXFP4 over ATen**.
@@ -214,8 +176,8 @@ geometric mean relative to ATen.*
 FlyDSL exceeds ATen throughput in every reported case for both formats.
 MXFP8 speedups range from **1.31x to 2.23x**, with the largest gain at
 `32 × 4096 × 4096`. MXFP4 ranges from **1.31x to 2.96x**, peaking at
-`32 × 14336 × 4096`. The integrated MXFP autotuning path chooses between ATen
-and FlyDSL for each eligible workload. The measurements cover NT layout.
+`32 × 14336 × 4096`. The MXFP autotuning path benchmarks FlyDSL alongside ATen
+when both backends are enabled and applicable. The measurements cover NT layout.
 
 ### Grouped GEMM: Uneven Work Across Experts
 
