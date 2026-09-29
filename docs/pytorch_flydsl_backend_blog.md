@@ -120,18 +120,13 @@ feed-forward layers. Its dimensions vary substantially with the number of tokens
 being processed, making performance across a range of shapes relevant to model
 developers.
 
-For large GEMMs, the kernel uses a `256 × 256` output tile computed by an
-eight-wave workgroup (Wave64, 512 threads total)—two waves along M and four
-along N. Its half-tile interleaved (HTI) schedule keeps four output quadrants in
-registers while interleaving two K tiles of global-to-local-data-share (LDS)
-loads with matrix fused multiply-add (MFMA) computation. Smaller shapes can
-autotune among narrower full-tile and HTI configurations.
+For large GEMMs, the tuned HTI configurations use a 256 × 256 output tile computed by an eight-wave workgroup (Wave64, 512 threads total)—two waves along M and four along N.
+The half-tile interleaved (HTI) schedule splits A along M and B along N, keeping four output-quadrant accumulators in registers.
+It processes consecutive K tiles in pairs, interleaving asynchronous loads from global memory into local data share (LDS), LDS-to-register reads, and matrix fused multiply-add (MFMA) computation. Smaller shapes can autotune among narrower full-tile and HTI configurations.
 
-The full-tile path uses a configurable `STAGES`-deep K-tile ring. Its prologue
-fills the ring, the steady-state loop consumes one LDS stage while refilling the
-oldest slot with a future K tile, and the epilogue drains the remaining stages.
-HTI specializes this pattern to two stages and recycles individual A/B halves
-only after their second quadrant consumer.
+The full-tile path uses a configurable `STAGES`-deep K-tile ring.
+Its prologue primes the ring, the steady-state loop overlaps computation on staged data with prefetches into reusable slots, and the epilogue drains the remaining stages.
+HTI uses two stages but schedules operand-buffer reuse at half-tile granularity, allowing individual A/B regions to be refilled without waiting for the entire tile’s computation to finish.
 
 For a step-by-step explanation of the producer/consumer ring and its wait
 semantics, see AMD's
@@ -139,11 +134,11 @@ semantics, see AMD's
 The FlyDSL GEMM schedule here adopts the same multi-stage LDS producer/consumer
 concept.
 
-HTI starts with K tile `t` in stage 0 and `t+1` in stage 1. Within one tile,
-`A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1`
-feeds `C01/C11`. After a half has served both consumers, its LDS region can be
-refilled: stage 0 receives `t+2` while stage 1 is consumed, then stage 1 receives
-`t+3`. The two stages alternate in this way across K.
+HTI uses two LDS stages for consecutive K tiles, with stage 0 assigned to tile `t` and stage 1 to `t+1`.
+Within each tile, `A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1` feeds `C01/C11`.
+Once an operand half’s required LDS-to-register reads are complete and the necessary synchronization is satisfied, its LDS region can be reused while MFMA continues on register-resident fragments.
+In steady state, the schedule progressively refills stage 0 with `t+2` and stage 1 with `t+3`, beginning those prefetches during computation of `t` and `t+1`, respectively.
+The two stages alternate in this way across K.
 
 ![Dense GEMM tile mapping and two-stage HTI ring buffer](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
 
