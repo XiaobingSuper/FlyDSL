@@ -21,10 +21,6 @@ In end-to-end vLLM A/B tests, whole-request speedup reaches **1.13x for BF16**,
 **2.04x for MXFP8**, and **3.01x for MXFP4**, with the result depending on model
 and concurrency.
 
-Users enable FlyDSL with `torch.compile` and GEMM autotuning for dense, grouped,
-and MXFP GEMMs; eligible eager RMSNorm and TopK calls dispatch automatically.
-Unsupported inputs retain existing PyTorch implementations.
-
 ## Why FlyDSL as a PyTorch Backend
 
 GPU DSLs choose different abstraction levels. The block-tensor programming model
