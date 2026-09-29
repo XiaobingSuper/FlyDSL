@@ -115,30 +115,13 @@ its comparison baseline and aggregation scope.
 
 ### Dense GEMM: Linear-Layer Workloads
 
-Dense matrix multiplication is a building block of transformer projection and
-feed-forward layers. Its dimensions vary substantially with the number of tokens
-being processed, making performance across a range of shapes relevant to model
-developers.
+Dense matrix multiplication is a building block of transformer projection and feed-forward layers. Its dimensions vary substantially with the number of tokens being processed, making performance across a range of shapes relevant to model developers.
 
-For large GEMMs, the tuned HTI configurations use a 256 × 256 output tile computed by an eight-wave workgroup (Wave64, 512 threads total)—two waves along M and four along N.
-The half-tile interleaved (HTI) schedule splits A along M and B along N, keeping four output-quadrant accumulators in registers.
-It processes consecutive K tiles in pairs, interleaving asynchronous loads from global memory into local data share (LDS), LDS-to-register reads, and matrix fused multiply-add (MFMA) computation. Smaller shapes can autotune among narrower full-tile and HTI configurations.
+FlyDSL provides full-tile and half-tile interleaved (HTI) execution paths. The full-tile path uses a configurable `STAGES`-deep K-tile ring in local data share (LDS). Its prologue primes the ring, the steady-state loop overlaps computation on staged data with asynchronous prefetches into reusable slots, and the final iterations drain the remaining stages. For a step-by-step explanation of this producer/consumer pattern and its wait semantics, see AMD’s [Multi-Stage LDS Pipeline: Keep K Blocks in Flight](https://rocm.blogs.amd.com/software-tools-optimization/accelerating-llm-inference-on-amd-gpus-with-low-latency-gemms/README.html#multi-stage-lds-pipeline-keep-k-blocks-in-flight).
 
-The full-tile path uses a configurable `STAGES`-deep K-tile ring.
-Its prologue primes the ring, the steady-state loop overlaps computation on staged data with prefetches into reusable slots, and the epilogue drains the remaining stages.
-HTI uses two stages but schedules operand-buffer reuse at half-tile granularity, allowing individual A/B regions to be refilled without waiting for the entire tile’s computation to finish.
+For large GEMMs, the tuned HTI configurations use a 256 × 256 output tile and an eight-wave workgroup (512 threads with Wave64). HTI splits A along M and B along N, maintaining four 128 × 128 output-quadrant accumulators in registers. Within each K tile, `A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1` feeds `C01/C11`. Smaller shapes can autotune among narrower full-tile and HTI configurations.
 
-For a step-by-step explanation of the producer/consumer ring and its wait
-semantics, see AMD's
-[Multi-Stage LDS Pipeline: Keep K Blocks in Flight](https://rocm.blogs.amd.com/software-tools-optimization/accelerating-llm-inference-on-amd-gpus-with-low-latency-gemms/README.html#multi-stage-lds-pipeline-keep-k-blocks-in-flight).
-The FlyDSL GEMM schedule here adopts the same multi-stage LDS producer/consumer
-concept.
-
-HTI uses two LDS stages for consecutive K tiles, with stage 0 assigned to tile `t` and stage 1 to `t+1`.
-Within each tile, `A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1` feeds `C01/C11`.
-Once an operand half’s required LDS-to-register reads are complete and the necessary synchronization is satisfied, its LDS region can be reused while MFMA continues on register-resident fragments.
-In steady state, the schedule progressively refills stage 0 with `t+2` and stage 1 with `t+3`, beginning those prefetches during computation of `t` and `t+1`, respectively.
-The two stages alternate in this way across K.
+HTI processes consecutive K tiles in pairs using two LDS stages. In steady state, prefetches progressively reuse the stages holding `t` and `t+1` for `t+2` and `t+3`. Reuse occurs half by half: once the required reads of an operand half’s old LDS contents are complete and synchronization requirements are met, its region can be refilled while matrix fused multiply-add (MFMA) computation continues on register-resident fragments. A phase-shifted barrier schedule staggers two four-wave groups, overlapping MFMA work in one group with operand loading and asynchronous prefetching in the other. Both groups alternate between these activities, combining half-tile buffer reuse with staggered execution rather than waiting for an entire tile’s computation to finish.
 
 ![Dense GEMM tile mapping and two-stage HTI ring buffer](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
 
