@@ -7,7 +7,8 @@ backend covers both eager execution and `torch.compile` without requiring
 applications to call custom kernels.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
-geometric-mean speedup for dense GEMM over the faster ATen/Triton baseline**,
+geometric-mean speedup for the 15-shape BF16 dense-GEMM suite over the faster
+ATen/Triton baseline**,
 **1.58x and 1.68x geometric means over ATen across 17 shapes per MXFP format**,
 **1.20x geometric mean over Triton across all 24 grouped-GEMM cases**, and
 **1.17x–3.66x over ATen across the 22 RMSNorm cases**. For the 10 small-K TopK
