@@ -8,8 +8,9 @@ applications to call custom kernels.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for the 15-shape BF16 dense-GEMM suite over the faster
-ATen/Triton baseline**,
-**1.58x and 1.68x geometric means over ATen across 17 shapes per MXFP format**,
+of ATen and Triton at each shape**,
+**1.58x and 1.68x geometric-mean speedups for MXFP8 and MXFP4, respectively,
+over ATen across 17 shapes per format**,
 **1.20x geometric mean over Triton across all 24 grouped-GEMM cases**, and
 **1.17x–3.66x over ATen across the 22 RMSNorm cases**. For the 10 small-K TopK
 cases, the geometric mean is **4.82x over ATen** with deterministic algorithms
