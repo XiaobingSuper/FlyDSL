@@ -499,7 +499,7 @@ def mxfp_gemm():
     title(
         fig,
         "MXFP scaled GEMM: low-precision performance across shapes",
-        "MI355X · source updated Sep 20 · NT layout · speedup over ATen · 17 shapes per format",
+        "MI355X · NT layout · speedup over ATen · 17 shapes per format",
     )
     for ax, fmt in zip(axes, ["mxfp8", "mxfp4"]):
         subset = [r for r in data if r["format"] == fmt]

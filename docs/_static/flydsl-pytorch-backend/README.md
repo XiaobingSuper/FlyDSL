@@ -11,18 +11,16 @@ a benchmark.
 The September 24 revision assumes a PyTorch build containing
 [MXFP scaled GEMM support, PR #196719](https://github.com/pytorch/pytorch/pull/196719).
 The article treats that PR as landed. Support and usage were checked against
-PyTorch `main` at commit `2e9b4aff8d49b22bbebf288ccbf63983c51e45f0`;
-the MXFP operator table uses the final numbers published in the benchmark
-comment last edited on September 20.
+PyTorch `main` at commit `2e9b4aff8d49b22bbebf288ccbf63983c51e45f0`.
 
-The API accepts eligible input views, but Inductor canonicalizes the FlyDSL MXFP
-path to row-major A and column-major B (NT), materializing that layout when
-needed. Both formats require logical `K` to be a multiple of 128, contiguous
-unswizzled E8M0 block scales, zero storage offsets, and FP16/BF16 output without
-fast accumulation. An optional one-dimensional bias is supported when its length
-is `N` and its dtype matches the output. Eligible canonical NT shapes can have
-M/N tails. All published MXFP benchmark shapes use this layout and satisfy the
-current requirements.
+Under `torch.compile`, Inductor constrains A and B to unit stride along K before
+backend selection: row-major A and column-major B, with compatible leading
+strides preserved. Incompatible inputs receive a layout copy. Both formats
+require logical `K` to be a multiple of 128, contiguous unswizzled E8M0 block
+scales, zero storage offsets, and FP16/BF16 output without fast accumulation. An
+optional one-dimensional bias is supported when its length is `N` and its dtype
+matches the output. Eligible constrained shapes can have M/N tails. All
+published MXFP benchmark shapes satisfy the current requirements.
 
 ## Architecture overview
 
@@ -44,11 +42,10 @@ behavior. Its source is the `architecture()` function in
 
 ## Sources
 
-The original four operator source tables were retrieved on September 9, 2026.
-The MXFP tables were refreshed on September 21 from the benchmark comment
-updated on September 20. CSV values preserve the precision of the published
-latency or throughput columns. Every case in each source suite is included; no
-cases are removed based on performance.
+The operator tables were collected from the published sources linked below. CSV
+values preserve the precision of the published latency or throughput columns.
+Every case in each source suite is included; no cases are removed based on
+performance.
 
 | Data | Cases | Source | Measurement setup |
 | --- | ---: | --- | --- |

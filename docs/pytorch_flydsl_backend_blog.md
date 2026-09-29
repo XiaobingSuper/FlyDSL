@@ -64,7 +64,7 @@ The following features are available in PyTorch:
 | Operation | Mode | PyTorch API | Input dtype | Layout / shape | Output / options |
 | --- | --- | --- | --- | --- | --- |
 | Dense GEMM | Compile | `torch.mm` | FP16, BF16 | Static 2D; NN/NT/TN/TT | Same dtype |
-| MXFP scaled GEMM | Compile | `F.scaled_mm` | MXFP8, MXFP4 | Static 2D; canonical NT | FP16/BF16; block scales |
+| MXFP scaled GEMM | Compile | `F.scaled_mm` | MXFP8, MXFP4 | Static 2D; A row-major, B column-major | FP16/BF16; block scales |
 | Grouped GEMM | Compile | `F.grouped_mm` | FP16, BF16 | Ragged 2D A; grouped 3D B | Uneven/empty groups |
 | RMSNorm | Eager | `F.rms_norm` | FP16, BF16, FP32 | Contiguous; 1-D norm shape | Forward |
 | TopK | Eager | `torch.topk` | FP32 | Contiguous; last dimension | Largest, sorted; functional/`out=` |
@@ -84,10 +84,13 @@ supply the quantized operands and contiguous, unswizzled scale tensors. Both
 formats use FP32 accumulation and return FP16 or BF16; the current path requires
 `K` to be a multiple of 128. It supports an optional one-dimensional bias whose
 length is `N` and whose dtype matches the output; fast accumulation is not
-supported. The API can accept eligible input views, but the Inductor layout
-constraint canonicalizes the FlyDSL path to row-major A and column-major B
-(NT), materializing a supported layout when needed. The measurements below use
-that canonical NT layout.
+supported. Under `torch.compile`, Inductor's layout constraint runs before
+backend selection and requires unit stride along K for A and B—row-major A and
+column-major B—while preserving compatible leading strides. For incompatible
+inputs, Inductor inserts a layout copy. The FlyDSL MXFP kernel and the
+measurements below use these constrained layouts. This constraint is specific to
+scaled GEMM: Dense `torch.mm` detects eligible NN/NT/TN/TT strides and passes
+their layout flags to FlyDSL without applying the MXFP canonicalization.
 
 Each operation has shape and alignment requirements. The detailed
 [dense GEMM](https://github.com/pytorch/pytorch/pull/194981),
@@ -202,9 +205,8 @@ scaled MFMA. The A/B ring follows the same quadrant consumer order and refills
 after the last data consumer; the scale ring retains matching scales until
 those consumers finish, then prefetches the next chunk.*
 
-In the published September 20 measurements on MI355X, the 17-shape NT suite
-shows a **1.58x geometric-mean speedup for MXFP8 over ATen** and a **1.68x
-speedup for MXFP4 over ATen**.
+On MI355X, the 17-shape NT suite shows a **1.58x geometric-mean speedup for
+MXFP8 over ATen** and a **1.68x speedup for MXFP4 over ATen**.
 
 ![MXFP8 and MXFP4 scaled GEMM speedups over ATen for all 17 shapes per format.](_static/flydsl-pytorch-backend/flydsl-mxfp-gemm-results.png)
 
