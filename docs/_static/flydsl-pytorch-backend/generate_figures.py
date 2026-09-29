@@ -293,19 +293,19 @@ def scheduling_diagrams():
     dense.text(
         3,
         29,
-        "HTI shown: 2-stage ring · Full-tile generalization: stage = k_tile % STAGES",
-        fontsize=10.5,
+        "Reuse: A0 → C00/C01 · A1 → C10/C11 · B0 → C00/C10 · B1 → C01/C11",
+        fontsize=9.8,
     )
     arrow(dense, (97, 40), (97, 30))
     dense.text(95.5, 32.5, "advance K", fontsize=8.5, color="#526477", ha="right")
     box(dense, 3, 17, 13, 9, "Stage 0", fill="#FFF7E8", edge="#D9A441", bold=True)
-    box(dense, 20, 17, 25, 9, "read t % 2 = 0", fill="#FFF0EB", edge=ORANGE)
-    box(dense, 55, 17, 40, 9, "after last reader: write K = t+2 to S0", fill="#EDF3F8", edge=BLUE)
-    arrow(dense, (45, 21.5), (55, 21.5))
+    box(dense, 20, 17, 34, 9, "K=t: C00 → C01 → C10 → C11", fill="#FFF0EB", edge=ORANGE)
+    box(dense, 62, 17, 33, 9, "then refill S0 with K=t+2", fill="#EDF3F8", edge=BLUE)
+    arrow(dense, (54, 21.5), (62, 21.5))
     box(dense, 3, 5, 13, 9, "Stage 1", fill="#FFF7E8", edge="#D9A441", bold=True)
-    box(dense, 20, 5, 25, 9, "read (t+1) % 2 = 1", fill="#FFF0EB", edge=ORANGE)
-    box(dense, 55, 5, 40, 9, "after last reader: write K = t+3 to S1", fill="#EDF3F8", edge=BLUE)
-    arrow(dense, (45, 9.5), (55, 9.5))
+    box(dense, 20, 5, 34, 9, "K=t+1: C00 → C01 → C10 → C11", fill="#FFF0EB", edge=ORANGE)
+    box(dense, 62, 5, 33, 9, "then refill S1 with K=t+3", fill="#EDF3F8", edge=BLUE)
+    arrow(dense, (54, 9.5), (62, 9.5))
     save(fig, "flydsl-dense-gemm-hti-pipeline")
 
     # MXFP: packed operands and block scales are staged together for scaled MFMA.

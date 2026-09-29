@@ -10,9 +10,10 @@ Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for dense GEMM over the faster ATen/Triton baseline**,
 **1.58x and 1.68x geometric means over ATen across 17 shapes per MXFP format**,
 **1.20x geometric mean over Triton across all 24 grouped-GEMM cases**, and
-**4.82x geometric mean for the 10 small-K TopK cases over ATen** with
-deterministic algorithms disabled. These gains are most relevant when the
-supported operations account for a significant share of model runtime.
+**1.17x–3.66x over ATen across the 22 RMSNorm cases**. For the 10 small-K TopK
+cases, the geometric mean is **4.82x over ATen** with deterministic algorithms
+disabled. These gains are most relevant when the supported operations account
+for a significant share of model runtime.
 In end-to-end vLLM A/B tests, whole-request speedup reaches **1.13x for BF16**,
 **2.04x for MXFP8**, and **3.01x for MXFP4**, with the result depending on model
 and concurrency.
@@ -135,18 +136,21 @@ only after their second quadrant consumer.
 For a step-by-step explanation of the producer/consumer ring and its wait
 semantics, see AMD's
 [Multi-Stage LDS Pipeline: Keep K Blocks in Flight](https://rocm.blogs.amd.com/software-tools-optimization/accelerating-llm-inference-on-amd-gpus-with-low-latency-gemms/README.html#multi-stage-lds-pipeline-keep-k-blocks-in-flight).
-That article's complete kernel also uses inter-CTA Split-K and intra-CTA K-slice
-parallelism; this integration shares the multi-stage LDS concept, not the full
-Split-K design.
+The FlyDSL GEMM schedule here adopts the same multi-stage LDS producer/consumer
+concept.
+
+HTI starts with K tile `t` in stage 0 and `t+1` in stage 1. Within one tile,
+`A0` feeds `C00/C01`, `A1` feeds `C10/C11`, `B0` feeds `C00/C10`, and `B1`
+feeds `C01/C11`. After a half has served both consumers, its LDS region can be
+refilled: stage 0 receives `t+2` while stage 1 is consumed, then stage 1 receives
+`t+3`. The two stages alternate in this way across K.
 
 ![Dense GEMM tile mapping and two-stage HTI ring buffer](_static/flydsl-pytorch-backend/flydsl-dense-gemm-hti-pipeline.png)
 
-*Figure 2. Dense GEMM tiled scheduling. HTI splits A along M into `A0/A1` and B
-along N into `B0/B1`, producing four C quadrants. The same eight waves form a
-2 × 4 mapping inside each quadrant and hold fragments from `C00`–`C11` while
-the next K-tile pair is prefetched. Each A/B half is recycled only after both
-quadrant consumers finish, so stage 0 and stage 1 are refilled two K tiles
-ahead.*
+*Figure 2. Dense GEMM tiled scheduling. HTI splits A and B into halves, then the
+same eight waves update `C00`–`C11` for each K tile. Stage 0 and stage 1 hold
+consecutive tiles; after the second use of an A/B half, that region is recycled
+for the tile two positions ahead.*
 
 Across 15 BF16 NT shapes, FlyDSL delivers a **1.10x geometric-mean speedup over
 the faster ATen/Triton baseline at each shape**. Gains are strongest in smaller
