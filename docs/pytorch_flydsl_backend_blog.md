@@ -5,7 +5,8 @@ PyTorch users on AMD MI350-series GPUs can now use
 dense and grouped GEMM, MXFP8/MXFP4 scaled GEMM, RMSNorm, and TopK, without
 requiring applications to call custom kernels. The optional backend supports
 GEMMs through `torch.compile`, while eligible RMSNorm and TopK calls dispatch
-automatically in eager mode when it is available and enabled.
+automatically in eager mode when it is available and enabled. Unsupported
+inputs retain existing PyTorch implementations.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for the 15-shape BF16 dense-GEMM suite over the faster
