@@ -62,15 +62,11 @@ Unsupported workloads retain existing implementations:
   FlyDSL, Triton, and AITER ASM kernels for each workload using its offline
   operator-tuning database.
 
-![PyTorch APIs feed two execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; torch.compile benchmarks eligible implementations of dense, grouped, and MXFP8/MXFP4 scaled GEMM and runs the fastest on an AMD GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-integration.png)
+![PyTorch APIs feed three execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; scaled dot product attention uses AOTriton to select Triton, AITER ASM, or FlyDSL from its tuning database; torch.compile benchmarks eligible dense, grouped, and MXFP8/MXFP4 GEMM implementations. The selected kernels run on an AMD GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-integration.png)
 
-*Figure 1. FlyDSL in PyTorch, with the optional package installed and FlyDSL
-enabled for GEMM autotuning. Eager execution dispatches by input support;
-TorchInductor selects by measured performance, with candidates depending on the
-operation. Both paths use PyTorch operator APIs.*
-
-*sdpa placeholder: Figure 1 to gain a third path, SDPA → AOTriton → FlyDSL /
-Triton / AITER ASM, selected by AOTriton's operator-tuning database.*
+*Figure 1. FlyDSL kernels reached through PyTorch APIs. Eager RMSNorm and TopK
+dispatch by input support; AOTriton selects a tuned SDPA implementation; and
+TorchInductor benchmarks eligible GEMM candidates.*
 
 ## Supported Features
 
@@ -367,19 +363,18 @@ in both orientations, which keeps head dimension 512 within LDS.
 *sdpa placeholder: attention scheduling figure (dual-wave pipeline; wide-head D
 staging and output sharding).*
 
-*sdpa* We measured SDPA in PyTorch with FP16 inputs, batch 4, and 48 heads,
-over 100 combinations of head dimension, sequence length, causal masking, and
-direction. Compared with AOTriton 0.13.50, AOTriton 0.14.2b reaches a **1.41x
-geometric-mean speedup for forward, 1.46x for backward, and 1.44x overall**.
-Causal forward improves at every head dimension from 32 to 256 (+8% to +88%),
-and non-causal backward improves by 78%–117% at head dimensions 96 and
-160–256. The comparison is between library releases, so it also
-includes AOTriton's Triton retuning and a different PyTorch build; it is not an
-isolated FlyDSL-versus-Triton measurement.
+*sdpa* The [AOTriton 0.14.2b
+release](https://github.com/ROCm/aotriton/releases/tag/0.14.2b) publishes
+throughput for AOTriton 0.13b and 0.14.2b by head dimension, direction, and
+causal mode. For the `gfx950` aggregates shown below, forward speedup ranges
+from **0.92x to 2.34x** and backward speedup from **0.93x to 2.47x**.
 
-*sdpa placeholder: attention forward/backward results figure on MI355X,
-AOTriton 0.14.2b versus 0.13.50, with a caption stating the shape suite and
-aggregation.*
+![AOTriton SDPA forward and backward throughput speedup on gfx950, grouped by head dimension and causal mode](_static/flydsl-pytorch-backend/flydsl-attention-results.png)
+
+*Figure 12. AOTriton 0.14.2b versus 0.13b on `gfx950`, using the published
+throughput aggregates for each head dimension; head dimension 384 is omitted.
+This release-to-release comparison also includes updated Triton, AITER, and
+tuning databases, so it is not an isolated FlyDSL-versus-Triton measurement.*
 
 ## End-to-End vLLM Inference
 
@@ -398,7 +393,7 @@ ABBA-interleaved repetitions.
 
 ![BF16 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-bf16-results.png)
 
-*Figure 12. BF16 whole-request speedup on one MI355X. The baseline enables ATen
+*Figure 13. BF16 whole-request speedup on one MI355X. The baseline enables ATen
 and Triton; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 **MXFP8 A8W8.** With ATen (hipBLASLt) as the baseline, FlyDSL improves all 18
@@ -407,7 +402,7 @@ model-concurrency combinations: **1.40x–2.03x** for Qwen3-32B,
 
 ![MXFP8 A8W8 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-mxfp8-results.png)
 
-*Figure 13. MXFP8 A8W8 whole-request speedup on one MI355X. The baseline is
+*Figure 14. MXFP8 A8W8 whole-request speedup on one MI355X. The baseline is
 ATen; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 **MXFP4 A4W4.** With `lm_head` left unquantized, all 18 combinations also
@@ -418,7 +413,7 @@ variance-qualified results.
 
 ![MXFP4 A4W4 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-mxfp4-results.png)
 
-*Figure 14. MXFP4 A4W4 whole-request speedup on one MI355X. The baseline is
+*Figure 15. MXFP4 A4W4 whole-request speedup on one MI355X. The baseline is
 ATen; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 ## Try It in PyTorch

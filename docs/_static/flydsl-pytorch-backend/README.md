@@ -1,7 +1,7 @@
 # PyTorch FlyDSL blog figures and benchmark data
 
 This directory contains the architecture overview, five operator-specific
-scheduling diagrams, five operator-performance figures, and three end-to-end
+scheduling diagrams, six operator-performance figures, and three end-to-end
 vLLM figures for [the blog](../../pytorch_flydsl_backend_blog.md), along with
 their source data and rendering material. Regenerating the figures does not run
 a benchmark.
@@ -24,13 +24,15 @@ published MXFP benchmark shapes satisfy the current requirements.
 
 ## Architecture overview
 
-The diagram follows an application through two execution modes on an AMD GPU
+The diagram follows an application through three execution paths on an AMD GPU
 and intentionally leaves hardware support gates to the article's feature table.
-It assumes the optional FlyDSL package is installed and the compiled GEMM path
-has FlyDSL and autotuning enabled:
+The eager and compiled GEMM paths assume that the optional FlyDSL package is
+installed and that compiled GEMMs have FlyDSL and autotuning enabled:
 
 - Eager RMSNorm and TopK dispatch to FlyDSL for eligible inputs and retain ATen
   for unsupported inputs.
+- PyTorch SDPA reaches AOTriton, whose offline tuning database selects among
+  FlyDSL, Triton, and AITER ASM implementations.
 - TorchInductor selects the fastest measured eligible implementation. Dense and
   grouped GEMM can use enabled ATen, Triton, and FlyDSL candidates; MXFP scaled
   GEMM benchmarks all eligible candidates, including ATen where supported.
@@ -54,6 +56,7 @@ performance.
 | [grouped_gemm.csv](grouped_gemm.csv) | 24 | [Grouped GEMM PR](https://github.com/pytorch/pytorch/pull/194032) | BF16 on `gfx950`; 14 uniform-group shapes, five K/N variants at `G=8, M=512`, and five ragged-M cases at `G=8, K=N=4096`; isolated process and fresh cache per backend/shape; steady-state TFLOP/s; output checked against eager |
 | [rmsnorm.csv](rmsnorm.csv) | 22 | [RMSNorm PR](https://github.com/pytorch/pytorch/pull/191447) | FP16/BF16/FP32 on MI355X; FlyDSL 0.3.0; GPU events, 10 warmup and 50 timed iterations; one run per case |
 | [topk.csv](topk.csv) | 33 | [TopK PR](https://github.com/pytorch/pytorch/pull/193548) | FP32 on MI355X; GPU events, 20 warmup and 100 timed iterations; median of three runs for each determinism setting |
+| [attention.csv](attention.csv) | 48 aggregates | [AOTriton 0.14.2b release](https://github.com/ROCm/aotriton/releases/tag/0.14.2b) | `gfx950`; AOTriton 0.14.2b versus 0.13b; forward/backward and causal/non-causal throughput grouped by head dimension; head dimension 384 omitted |
 | [vllm_e2e.csv](vllm_e2e.csv) | 18 each for BF16/MXFP8/MXFP4 | Local vLLM A/B run | `vllm bench serve` on one MI355X; three models; concurrency 8–256; ISL 256, OSL 512; TP=1; fixed per-model KV cache |
 
 The suites are separate experiments, not a single run under one common software
@@ -107,6 +110,11 @@ each value `p` to `1 + p / 100` for the publication's speedup-ratio convention.
 - MXFP panels show all 17 shapes per format on the same scale. The geometric
   means are 1.5755x versus ATen for MXFP8 and 1.6804x for MXFP4. These NT
   measurements do not establish performance for NN, TN, or TT layouts.
+- Attention speedup is the published AOTriton 0.14.2b throughput divided by
+  the corresponding 0.13b value. The chart includes only `gfx950`, omits head
+  dimension 384, and does not show a geometric mean because the release-level
+  means aggregate a larger underlying case set than the per-head-dimension
+  values.
 - Chart axes start at zero. A dashed line at `1.0x` identifies the baseline.
 
 Calculations use the published latency/throughput columns rather than their
@@ -134,9 +142,9 @@ python3 docs/_static/flydsl-pytorch-backend/generate_figures.py
 
 The script writes PNG versions of the architecture overview, each
 operator-specific scheduling diagram, and the dense GEMM, MXFP scaled GEMM,
-grouped GEMM, RMSNorm, TopK, and end-to-end vLLM performance charts. It also
-prints the calculated performance aggregates. Set `FLYDSL_BLOG_WRITE_SVG=1` to
-also generate editable SVGs locally.
+grouped GEMM, RMSNorm, TopK, Attention, and end-to-end vLLM performance charts.
+It also prints the calculated performance aggregates. Set
+`FLYDSL_BLOG_WRITE_SVG=1` to also generate editable SVGs locally.
 
 The current `flydsl-mxfp-gemm-results` figure is generated from the 34
 measurements published on PR #196719.

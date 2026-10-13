@@ -76,14 +76,14 @@ def save(fig, name):
 
 
 def architecture():
-    fig, ax = plt.subplots(figsize=(12.6, 8.6))
+    fig, ax = plt.subplots(figsize=(15.6, 8.6))
     fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-    ax.set(xlim=(0, 100), ylim=(0, 100))
+    ax.set(xlim=(0, 120), ylim=(0, 100))
     ax.axis("off")
     title(
         fig,
-        "Two paths from PyTorch to FlyDSL kernels",
-        "Automatic dispatch in eager mode · autotuning with torch.compile",
+        "PyTorch paths to FlyDSL kernels",
+        "Eager dispatch · AOTriton tuning · autotuning with torch.compile",
     )
 
     def box(x, y, width, height, fill="white", edge="#CBD5DF"):
@@ -132,30 +132,30 @@ def architecture():
             )
         )
 
-    box(18, 78, 64, 10)
-    label(50, 84.5, "PyTorch application", size=15, bold=True)
-    label(50, 80.6, "Matrix multiplication · normalization · selection", size=12)
+    box(20, 78, 80, 10)
+    label(60, 84.5, "PyTorch application", size=15, bold=True)
+    label(60, 80.6, "Matrix multiplication · attention · normalization · selection", size=12)
 
-    # Each mode has its own selection policy; both execute on the same GPU.
-    box(4, 19, 44, 53, fill="#F6F8FB", edge=GRID)
-    box(52, 19, 44, 53, fill="#F6F8FB", edge=GRID)
-    line([(50, 78), (50, 75), (26, 75)])
-    line([(50, 75), (74, 75)])
-    arrow((26, 75), (26, 72))
-    arrow((74, 75), (74, 72))
+    # Each path has its own selection policy; all execute on the same GPU.
+    for x in (2, 42, 82):
+        box(x, 19, 36, 53, fill="#F6F8FB", edge=GRID)
+    line([(60, 78), (60, 75), (20, 75)])
+    line([(60, 75), (100, 75)])
+    for x in (20, 60, 100):
+        arrow((x, 75), (x, 72))
 
-    label(26, 67.7, "Eager execution", size=16, bold=True)
-    label(26, 63.4, "RMSNorm · TopK", size=12)
-    arrow((26, 61), (26, 59))
-    box(9, 49, 34, 10)
-    label(26, 55.4, "Dispatch by input support", bold=True)
-    label(26, 51.7, "Shape · dtype · layout", size=11.5, color="#526477")
-    line([(26, 49), (26, 46.5), (16.5, 46.5)])
-    line([(26, 46.5), (35.5, 46.5)])
-    arrow((16.5, 46.5), (16.5, 39))
-    arrow((35.5, 46.5), (35.5, 39))
+    label(20, 67.7, "Eager execution", size=16, bold=True)
+    label(20, 63.4, "RMSNorm · TopK", size=12)
+    arrow((20, 61), (20, 59))
+    box(5, 49, 30, 10)
+    label(20, 55.4, "Dispatch by input support", size=12.5, bold=True)
+    label(20, 51.7, "Shape · dtype · layout", size=11.5, color="#526477")
+    line([(20, 49), (20, 46.5), (11, 46.5)])
+    line([(20, 46.5), (29, 46.5)])
+    arrow((11, 46.5), (11, 39))
+    arrow((29, 46.5), (29, 39))
     # Light backgrounds keep branch labels legible over the connectors.
-    for x, text in [(16.5, "Eligible inputs"), (35.5, "Other inputs")]:
+    for x, text in [(11, "Eligible inputs"), (29, "Other inputs")]:
         ax.text(
             x,
             43,
@@ -166,31 +166,46 @@ def architecture():
             bbox={"facecolor": "#F6F8FB", "edgecolor": "none", "pad": 2},
             zorder=4,
         )
-    box(8, 31, 17, 8, fill="#FFF0EB", edge=ORANGE)
-    box(27, 31, 17, 8)
-    label(16.5, 35, "FlyDSL kernel", bold=True, color=ORANGE)
-    label(35.5, 35, "ATen kernel", bold=True)
-    line([(16.5, 31), (16.5, 25.5), (26, 25.5)])
-    line([(35.5, 31), (35.5, 25.5), (26, 25.5)])
-    arrow((26, 25.5), (26, 14))
+    box(3.5, 31, 15, 8, fill="#FFF0EB", edge=ORANGE)
+    box(21.5, 31, 15, 8)
+    label(11, 35, "FlyDSL kernel", size=11.5, bold=True, color=ORANGE)
+    label(29, 35, "ATen kernel", size=11.5, bold=True)
+    line([(11, 31), (11, 25.5), (20, 25.5)])
+    line([(29, 31), (29, 25.5), (20, 25.5)])
+    arrow((20, 25.5), (20, 14))
 
-    label(74, 67.7, "torch.compile", size=16, bold=True)
-    label(74, 63.4, "Dense / grouped GEMM · MXFP8 / MXFP4", size=11.5)
-    arrow((74, 61), (74, 59))
-    box(56, 43, 36, 16)
-    label(74, 55.4, "Benchmark eligible candidates", size=12.5, bold=True)
-    for x, name in [(57, "ATen"), (69, "Triton"), (81, "FlyDSL")]:
+    label(60, 67.7, "F.scaled_dot_product_attention", size=13, bold=True)
+    label(60, 63.4, "backed by AOTriton", size=12)
+    arrow((60, 61), (60, 59))
+    box(44, 43, 32, 16)
+    label(60, 55.4, "Select tuned candidate", size=12.5, bold=True)
+    for x, name in [(45, "Triton"), (55.5, "AITER ASM"), (66, "FlyDSL")]:
         flydsl = name == "FlyDSL"
-        box(x, 47, 10, 5, fill="#FFF0EB" if flydsl else "#F6F8FB", edge=ORANGE if flydsl else GRID)
-        label(x + 5, 49.5, name, size=12, bold=True, color=ORANGE if flydsl else INK)
-    label(74, 44.8, "Candidates depend on the operation", size=10.5, color="#526477")
-    arrow((74, 43), (74, 37))
-    box(57, 28, 34, 9)
-    label(74, 32.5, "Run fastest measured kernel", size=12.5, bold=True)
-    arrow((74, 28), (74, 14))
+        box(x, 47, 9.5, 5, fill="#FFF0EB" if flydsl else "#F6F8FB", edge=ORANGE if flydsl else GRID)
+        label(x + 4.75, 49.5, name, size=9.5, bold=True, color=ORANGE if flydsl else INK)
+    label(60, 44.8, "Offline tuning database", size=10.5, color="#526477")
+    arrow((60, 43), (60, 37))
+    box(45, 28, 30, 9)
+    label(60, 32.5, "Run selected kernel\n(compiled ahead of time)", size=11.5, bold=True)
+    arrow((60, 28), (60, 14))
 
-    box(18, 4, 64, 10, fill="#EDF3F8", edge=BLUE)
-    label(50, 9, "AMD GPU", size=15, bold=True)
+    label(100, 67.7, "torch.compile", size=16, bold=True)
+    label(100, 63.4, "Dense / grouped GEMM · MXFP8 / MXFP4", size=11)
+    arrow((100, 61), (100, 59))
+    box(84, 43, 32, 16)
+    label(100, 55.4, "Benchmark eligible candidates", size=12, bold=True)
+    for x, name in [(85, "ATen"), (95.5, "Triton"), (106, "FlyDSL")]:
+        flydsl = name == "FlyDSL"
+        box(x, 47, 9.5, 5, fill="#FFF0EB" if flydsl else "#F6F8FB", edge=ORANGE if flydsl else GRID)
+        label(x + 4.75, 49.5, name, size=10.5, bold=True, color=ORANGE if flydsl else INK)
+    label(100, 44.8, "Candidates depend on the operation", size=10.5, color="#526477")
+    arrow((100, 43), (100, 37))
+    box(85, 28, 30, 9)
+    label(100, 32.5, "Run fastest measured kernel", size=12, bold=True)
+    arrow((100, 28), (100, 14))
+
+    box(20, 4, 80, 10, fill="#EDF3F8", edge=BLUE)
+    label(60, 9, "AMD GPU", size=15, bold=True)
     save(fig, "flydsl-pytorch-integration")
 
 
@@ -659,6 +674,52 @@ def topk():
     save(fig, "flydsl-topk-results")
 
 
+def attention():
+    data = rows("attention.csv")
+    fig, axes = plt.subplots(1, 2, figsize=(12.6, 8.0), sharey=True)
+    fig.subplots_adjust(left=0.13, right=0.97, top=0.79, bottom=0.14, wspace=0.20)
+    title(
+        fig,
+        "AOTriton SDPA: performance by head dimension",
+        "gfx950 · AOTriton 0.14.2b vs 0.13b · throughput speedup · head dimension 384 omitted",
+    )
+    y = np.arange(len(data))
+    handles = [
+        Patch(color=ORANGE, label="Non-causal"),
+        Patch(color=BLUE, label="Causal"),
+    ]
+    for ax, direction, heading in zip(axes, ["fwd", "bwd"], ["Forward", "Backward"]):
+        for causal, color, offset in [
+            ("noncausal", ORANGE, -0.17),
+            ("causal", BLUE, 0.17),
+        ]:
+            values = [
+                float(r[f"{direction}_{causal}_0142b"]) / float(r[f"{direction}_{causal}_013"])
+                for r in data
+            ]
+            ax.barh(y + offset, values, height=0.30, color=color)
+            for yy, value in zip(y + offset, values):
+                ax.text(max(value, 1) + 0.035, yy, f"{value:.2f}×", va="center", fontsize=9.5)
+            print(
+                f"Attention {direction} {causal}: "
+                f"range={min(values):.4f}–{max(values):.4f}"
+            )
+        ax.set_yticks(y, [r["head_dim"] for r in data], fontsize=10.5)
+        ax.set_ylim(len(data) - 0.55, -0.55)
+        style(ax, 2.75, [0, 0.5, 1, 1.5, 2, 2.5])
+        ax.set_xlabel("AOTriton release-to-release speedup", labelpad=10)
+        ax.set_title(heading, fontsize=14, fontweight="bold", loc="left", pad=14)
+    axes[0].set_ylabel("Head dimension", labelpad=10)
+    fig.legend(handles=handles, loc="upper right", bbox_to_anchor=(0.96, 0.86), frameon=False, ncol=2)
+    fig.text(
+        0.04,
+        0.030,
+        "Each bar uses the two published values for that head dimension · dashed line = AOTriton 0.13b",
+        fontsize=10.5,
+    )
+    save(fig, "flydsl-attention-results")
+
+
 def vllm_e2e():
     data = rows("vllm_e2e.csv")
     models = [
@@ -738,4 +799,5 @@ if __name__ == "__main__":
     grouped_gemm()
     rmsnorm()
     topk()
+    attention()
     vllm_e2e()
