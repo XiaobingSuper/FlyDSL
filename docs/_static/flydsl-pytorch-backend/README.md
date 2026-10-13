@@ -148,3 +148,10 @@ It also prints the calculated performance aggregates. Set
 
 The current `flydsl-mxfp-gemm-results` figure is generated from the 34
 measurements published on PR #196719.
+
+The two attention scheduling diagrams,
+`flydsl-attention-dualwave-pipeline.svg` and `flydsl-attention-wide-head.svg`,
+are hand-written SVGs rather than script output; edit them directly. They use
+the script's palette and switch to a dark palette under
+`prefers-color-scheme: dark`, so they follow the viewer's browser or OS theme.
+Renderers without media-query support show the light version.
