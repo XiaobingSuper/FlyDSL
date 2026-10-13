@@ -9,7 +9,7 @@ requiring applications to call custom kernels. The optional backend supports
 GEMMs through `torch.compile`, while eligible RMSNorm and TopK calls dispatch
 automatically in eager mode when it is available and enabled. Unsupported
 inputs retain existing PyTorch implementations.
-*sdpa* FlyDSL attention kernels ship as an additional backend in AOTriton,
+FlyDSL attention kernels ship as an additional backend in AOTriton,
 the library behind PyTorch's ROCm `F.scaled_dot_product_attention` (SDPA),
 starting with the 0.14b series.
 
@@ -23,9 +23,9 @@ over ATen across 17 shapes per format**,
 cases, the geometric mean is **4.82x over ATen** with deterministic algorithms
 disabled. These gains are most relevant when the supported operations account
 for a significant share of model runtime.
-*sdpa* For Attention, upgrading AOTriton from 0.13b series to 0.14.2b gives a
-**1.41x forward and 1.46x backward geometric-mean speedup** across 100 FP16
-attention cases.
+*sdpa* For attention, AOTriton 0.14.2b's published `gfx950` throughput ranges
+from **0.92x to 2.34x of 0.13b for forward** and **0.93x to 2.47x for
+backward**, across head dimensions and causal modes.
 In end-to-end vLLM A/B tests, whole-request speedup reaches **1.13x for BF16**,
 **2.04x for MXFP8**, and **3.01x for MXFP4**, with the result depending on model
 and concurrency.
@@ -46,8 +46,14 @@ These controls appear directly in the kernels: HTI and staged LDS in Dense/MXFP
 GEMM, matched operand-scale lifetimes and scaled MFMA in MXFP, and persistent
 expert scheduling in Grouped GEMM. FlyDSL expresses them in Python and lowers
 them through MLIR while preserving explicit hardware mapping.
-*sdpa* The attention kernels add a dual-wave software pipeline that overlaps MFMA
-with softmax VALU work, and head-dimension staging across LDS and waves.
+
+*sdpa* Attention shows why this control matters. The FlyDSL attention kernels
+use a dual-wave software pipeline, which overlaps the softmax VALU work of one
+KV tile with the MFMA work of another. At the largest head dimensions, they
+also split the head dimension: in time through LDS, and across waves for the
+output accumulator. In FlyDSL, both schedules are written in the kernel
+itself, so they can be developed and tuned per architecture without changes to
+the compiler.
 
 PyTorch turns those specialized templates into an additive, measurable backend.
 Unsupported workloads retain existing implementations:
@@ -57,7 +63,7 @@ Unsupported workloads retain existing implementations:
 - **`torch.compile`:** TorchInductor filters eligible Dense, Grouped, and MXFP
   GEMM candidates, benchmarks FlyDSL beside ATen and Triton where supported,
   caches the winner for each workload, and runs the fastest measured kernel.
-- *sdpa* **Multi-head attention:** PyTorch's built-in
+- **Multi-head attention:** PyTorch's built-in operator
   `F.scaled_dot_product_attention` calls AOTriton, which now picks among
   FlyDSL, Triton, and AITER ASM kernels for each workload using its offline
   operator-tuning database.
@@ -105,12 +111,12 @@ measurements below use these constrained layouts. This constraint is specific to
 scaled GEMM: Dense `torch.mm` detects eligible NN/NT/TN/TT strides and passes
 their layout flags to FlyDSL without applying the MXFP canonicalization.
 
-*sdpa* The FlyDSL attention kernels match the flash and memory-efficient attention
+The FlyDSL attention kernels match the flash and memory-efficient attention
 capabilities of `F.scaled_dot_product_attention`, with one current limit: FP32
 is not supported. FP32 inputs, and workloads that the tuning database assigns
 elsewhere, keep AOTriton's Triton or AITER ASM kernels. AOTriton also ships
 FlyDSL attention kernels for RDNA4 (`gfx1201`).
-*sdpa* Under `torch.compile`, Inductor keeps SDPA's flash and memory-efficient
+Under `torch.compile`, Inductor keeps SDPA's flash and memory-efficient
 attention operators as calls to ATen rather than generating code for them, so
 they still reach the AOTriton kernels. Hand-written matmul–softmax–matmul
 patterns that Inductor rewrites into SDPA follow the same path. By contrast,
@@ -125,7 +131,7 @@ Each operation has shape and alignment requirements. The detailed
 [TopK](https://github.com/pytorch/pytorch/pull/193548) support descriptions define
 those boundaries. Unsupported eager calls retain ATen behavior; compiled GEMMs
 can use the other enabled backends.
-*sdpa* The [AOTriton 0.14.2b update](https://github.com/pytorch/pytorch/pull/197747)
+The [AOTriton 0.14.2b update](https://github.com/pytorch/pytorch/pull/197747)
 brings these kernels to PyTorch.
 
 ## Kernel-Level Performance
@@ -334,16 +340,14 @@ parity. For applications that inspect indices, equal-value ties can be ordered
 differently across backends; reproducibility does not guarantee identical tied
 indices.
 
-*sdpa*
-
 ### Attention: FMHA Kernels Through AOTriton
 
-*sdpa* Unlike the operators above, SDPA does not reach FlyDSL through a
+Unlike the operators above, SDPA does not reach FlyDSL through a
 PyTorch-side backend. AOTriton compiles FlyDSL kernels into its own library,
 then dispatches them beside its Triton and AITER ASM kernels. Forward is one
 kernel; backward uses separate dQ and dK/dV kernels.
 
-*sdpa* For head dimensions up to 256, the forward kernel uses a dual-wave
+For head dimensions up to 256, the forward kernel uses a dual-wave
 software pipeline. Two KV tiles are in flight per workgroup, and the softmax of
 one tile runs on the VALU while the other tile's QK and PV products run on the
 MFMA units. At head dimension 512, two resident K/V tiles would need about
@@ -353,7 +357,7 @@ staging K and V in pipelined D slices through the same LDS buffers, and across
 waves, with each wave accumulating one slice of the output so the accumulator
 fits in registers.
 
-*sdpa* Backward reuses the forward building blocks rather than deriving new
+Backward reuses the forward building blocks rather than deriving new
 lane maps. dK/dV is the forward loop transposed: K and V stay in registers
 while Q and dO stream through LDS, and the transposed operands use the
 forward's LDS transpose read (`ds_read_b64_tr_b16`). In dQ, each of the three
@@ -521,11 +525,9 @@ The same `pn.flydsl.disabled()` context manager applies to eligible
 `torch.topk` calls. Actual dispatch depends on the operation's shape, dtype, and
 layout.
 
-*sdpa*
-
 ### Attention
 
-*sdpa* SDPA needs no FlyDSL package or configuration. It only needs a PyTorch
+SDPA needs no FlyDSL package or configuration. It only needs a PyTorch
 build linked against AOTriton 0.14.2b or later, which bundles the precompiled
 kernels:
 
@@ -542,7 +544,7 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
 out.sum().backward()
 ```
 
-*sdpa* AOTriton chooses FlyDSL or another kernel for each workload.
+AOTriton chooses FlyDSL or another kernel for each workload.
 
 ## What's Next
 
