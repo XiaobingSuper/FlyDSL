@@ -681,7 +681,7 @@ def attention():
     title(
         fig,
         "AOTriton SDPA: performance by head dimension",
-        "gfx950 · AOTriton 0.14.2b vs 0.13b · throughput speedup · head dimension 384 omitted",
+        "gfx950 · AOTriton 0.14.2b vs 0.13b · throughput speedup",
     )
     y = np.arange(len(data))
     handles = [

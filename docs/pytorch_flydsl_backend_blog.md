@@ -376,9 +376,9 @@ from **0.92x to 2.34x** and backward speedup from **0.93x to 2.47x**.
 ![AOTriton SDPA forward and backward throughput speedup on gfx950, grouped by head dimension and causal mode](_static/flydsl-pytorch-backend/flydsl-attention-results.png)
 
 *Figure 12. AOTriton 0.14.2b versus 0.13b on `gfx950`, using the published
-throughput aggregates for each head dimension; head dimension 384 is omitted.
-This release-to-release comparison also includes updated Triton, AITER, and
-tuning databases, so it is not an isolated FlyDSL-versus-Triton measurement.*
+throughput aggregates for each head dimension. This release-to-release
+comparison also includes updated Triton, AITER, and tuning databases, so it is
+not an isolated FlyDSL-versus-Triton measurement.*
 
 ## End-to-End vLLM Inference
 
