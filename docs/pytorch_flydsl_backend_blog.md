@@ -2,11 +2,16 @@
 
 PyTorch users on AMD MI350-series GPUs can now use
 [FlyDSL](https://github.com/ROCm/FlyDSL) through existing operator APIs for
-dense and grouped GEMM, MXFP8/MXFP4 scaled GEMM, RMSNorm, and TopK, without
+dense and grouped GEMM,
+fused multi-head attention (FMHA/Attention),
+MXFP8/MXFP4 scaled GEMM, RMSNorm, and TopK, without
 requiring applications to call custom kernels. The optional backend supports
 GEMMs through `torch.compile`, while eligible RMSNorm and TopK calls dispatch
 automatically in eager mode when it is available and enabled. Unsupported
 inputs retain existing PyTorch implementations.
+FlyDSL attention kernels ship as an additional backend in AOTriton,
+the library behind PyTorch's ROCm `F.scaled_dot_product_attention` (SDPA),
+starting with the 0.14b series.
 
 Across the reported kernel-level operator suites, FlyDSL provides a **1.10x
 geometric-mean speedup for the 15-shape BF16 dense-GEMM suite over the faster
@@ -18,6 +23,9 @@ over ATen across 17 shapes per format**,
 cases, the geometric mean is **4.82x over ATen** with deterministic algorithms
 disabled. These gains are most relevant when the supported operations account
 for a significant share of model runtime.
+For attention, AOTriton 0.14.2b's published `gfx950` throughput ranges
+from **0.92x to 2.34x of 0.13b for forward** and **0.93x to 2.47x for
+backward**, across head dimensions and causal modes.
 In end-to-end vLLM A/B tests, whole-request speedup reaches **1.13x for BF16**,
 **2.04x for MXFP8**, and **3.01x for MXFP4**, with the result depending on model
 and concurrency.
@@ -39,6 +47,14 @@ GEMM, matched operand-scale lifetimes and scaled MFMA in MXFP, and persistent
 expert scheduling in Grouped GEMM. FlyDSL expresses them in Python and lowers
 them through MLIR while preserving explicit hardware mapping.
 
+Attention shows why this control matters. The FlyDSL attention kernels
+use a dual-wave software pipeline, which overlaps the softmax VALU work of one
+KV tile with the MFMA work of another. At the largest head dimensions, they
+also split the head dimension: in time through LDS, and across waves for the
+output accumulator. In FlyDSL, both schedules are written in the kernel
+itself, so they can be developed and tuned per architecture without changes to
+the compiler.
+
 PyTorch turns those specialized templates into an additive, measurable backend.
 Unsupported workloads retain existing implementations:
 
@@ -47,13 +63,16 @@ Unsupported workloads retain existing implementations:
 - **`torch.compile`:** TorchInductor filters eligible Dense, Grouped, and MXFP
   GEMM candidates, benchmarks FlyDSL beside ATen and Triton where supported,
   caches the winner for each workload, and runs the fastest measured kernel.
+- **Multi-head attention:** PyTorch's built-in operator
+  `F.scaled_dot_product_attention` calls AOTriton, which now picks among
+  FlyDSL, Triton, and AITER ASM kernels for each workload using its offline
+  operator-tuning database.
 
-![PyTorch APIs feed two execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; torch.compile benchmarks eligible implementations of dense, grouped, and MXFP8/MXFP4 scaled GEMM and runs the fastest on an AMD GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-integration.png)
+![PyTorch APIs feed three execution paths: eager dispatch chooses FlyDSL for eligible RMSNorm and TopK inputs or ATen otherwise; scaled dot product attention uses AOTriton to select Triton, AITER ASM, or FlyDSL from its tuning database; torch.compile benchmarks eligible dense, grouped, and MXFP8/MXFP4 GEMM implementations. The selected kernels run on an AMD GPU.](_static/flydsl-pytorch-backend/flydsl-pytorch-integration.png)
 
-*Figure 1. FlyDSL in PyTorch, with the optional package installed and FlyDSL
-enabled for GEMM autotuning. Eager execution dispatches by input support;
-TorchInductor selects by measured performance, with candidates depending on the
-operation. Both paths use PyTorch operator APIs.*
+*Figure 1. FlyDSL kernels reached through PyTorch APIs. Eager RMSNorm and TopK
+dispatch by input support; AOTriton selects a tuned SDPA implementation; and
+TorchInductor benchmarks eligible GEMM candidates.*
 
 ## Supported Features
 
@@ -67,6 +86,7 @@ The following features are available in PyTorch:
 | Grouped GEMM | Compile | `F.grouped_mm` | FP16, BF16 | Ragged 2D A; grouped 3D B | Uneven/empty groups |
 | RMSNorm | Eager | `F.rms_norm` | FP16, BF16, FP32 | Contiguous; 1-D norm shape | Forward |
 | TopK | Eager | `torch.topk` | FP32 | Contiguous; last dimension | Largest, sorted; functional/`out=` |
+| Attention (via AOTriton) | Eager, compile | `F.scaled_dot_product_attention` | FP16, BF16 | D innermost; head dim 32–512 | Forward and backward |
 
 Dense GEMM's [four-layout support](https://github.com/pytorch/pytorch/pull/194981)
 accepts row-major and column-major inputs, including eligible transpose views.
@@ -91,6 +111,18 @@ measurements below use these constrained layouts. This constraint is specific to
 scaled GEMM: Dense `torch.mm` detects eligible NN/NT/TN/TT strides and passes
 their layout flags to FlyDSL without applying the MXFP canonicalization.
 
+The FlyDSL attention kernels match the flash and memory-efficient attention
+capabilities of `F.scaled_dot_product_attention`, with one current limit: FP32
+is not supported. FP32 inputs, and workloads that the tuning database assigns
+elsewhere, keep AOTriton's Triton or AITER ASM kernels. AOTriton also ships
+FlyDSL attention kernels for RDNA4 (`gfx1201`).
+Under `torch.compile`, Inductor keeps SDPA's flash and memory-efficient
+attention operators as calls to ATen rather than generating code for them, so
+they still reach the AOTriton kernels. Hand-written matmul–softmax–matmul
+patterns that Inductor rewrites into SDPA follow the same path. By contrast,
+`torch.nn.attention.flex_attention` is a separate API that Inductor compiles
+into its own Triton kernels; it does not use AOTriton.
+
 Each operation has shape and alignment requirements. The detailed
 [dense GEMM](https://github.com/pytorch/pytorch/pull/194981),
 [MXFP scaled GEMM](https://github.com/pytorch/pytorch/pull/196719),
@@ -99,6 +131,8 @@ Each operation has shape and alignment requirements. The detailed
 [TopK](https://github.com/pytorch/pytorch/pull/193548) support descriptions define
 those boundaries. Unsupported eager calls retain ATen behavior; compiled GEMMs
 can use the other enabled backends.
+The [AOTriton 0.14.2b update](https://github.com/pytorch/pytorch/pull/197747)
+brings these kernels to PyTorch.
 
 ## Kernel-Level Performance
 
@@ -306,6 +340,56 @@ parity. For applications that inspect indices, equal-value ties can be ordered
 differently across backends; reproducibility does not guarantee identical tied
 indices.
 
+### Attention: FMHA Kernels Through AOTriton
+
+Unlike the operators above, SDPA does not reach FlyDSL through a
+PyTorch-side backend. AOTriton compiles FlyDSL kernels into its own library,
+then dispatches them beside its Triton and AITER ASM kernels. Forward is one
+kernel; backward uses separate dQ and dK/dV kernels.
+
+For head dimensions up to 256, the forward kernel uses a dual-wave
+software pipeline. Two KV tiles are in flight per workgroup, and the softmax of
+one tile runs on the VALU while the other tile's QK and PV products run on the
+MFMA units. At head dimension 512, two resident K/V tiles would need about
+272 KB of LDS against the 160 KB limit, so a separate wide-head body
+processes one tile at a time. It splits the head dimension twice: in time, by
+staging K and V in pipelined D slices through the same LDS buffers, and across
+waves, with each wave accumulating one slice of the output so the accumulator
+fits in registers.
+
+Backward reuses the forward building blocks rather than deriving new
+lane maps. dK/dV is the forward loop transposed: K and V stay in registers
+while Q and dO stream through LDS, and the transposed operands use the
+forward's LDS transpose read (`ds_read_b64_tr_b16`). In dQ, each of the three
+GEMMs matches one the forward already emits. The K tile is staged once and read
+in both orientations, which keeps head dimension 512 within LDS.
+
+![Dual-wave attention pipeline: within a wave, QK and PV on the matrix cores overlap the softmax of a neighbouring KV tile on the vector units; two wave groups alternate between loading K and V and computing, one phase apart.](_static/flydsl-pytorch-backend/flydsl-attention-dualwave-pipeline.svg)
+
+*Figure 12. Dual-wave forward pipeline for head dimensions up to 256. Within a
+wave, each matrix-core step overlaps the softmax of a neighbouring KV tile;
+across the workgroup, two wave groups run one phase apart, so one group loads K
+and V while the other computes.*
+
+![Wide-head attention at head dimension 512: K and V tiles are staged through LDS in two halves, two waves split the output columns of each Q tile, and every load overlaps an earlier multiply.](_static/flydsl-pytorch-backend/flydsl-attention-wide-head.svg)
+
+*Figure 13. Wide-head forward body at head dimension 512. K and V are staged
+through two LDS buffers in halves of 256 columns, and two waves compute the same
+scores while each accumulates half of the output.*
+
+The [AOTriton 0.14.2b
+release](https://github.com/ROCm/aotriton/releases/tag/0.14.2b) publishes
+throughput for AOTriton 0.13b and 0.14.2b by head dimension, direction, and
+causal mode. For the `gfx950` aggregates shown below, forward speedup ranges
+from **0.92x to 2.34x** and backward speedup from **0.93x to 2.47x**.
+
+![AOTriton SDPA forward and backward throughput speedup on gfx950, grouped by head dimension and causal mode](_static/flydsl-pytorch-backend/flydsl-attention-results.png)
+
+*Figure 14. AOTriton 0.14.2b versus 0.13b on `gfx950`, using the published
+throughput aggregates for each head dimension. This release-to-release
+comparison also includes updated Triton, AITER, and tuning databases, so it is
+not an isolated FlyDSL-versus-Triton measurement.*
+
 ## End-to-End vLLM Inference
 
 We used `vllm bench serve` on one MI355X (`TP=1`) with
@@ -323,7 +407,7 @@ ABBA-interleaved repetitions.
 
 ![BF16 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-bf16-results.png)
 
-*Figure 12. BF16 whole-request speedup on one MI355X. The baseline enables ATen
+*Figure 15. BF16 whole-request speedup on one MI355X. The baseline enables ATen
 and Triton; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 **MXFP8 A8W8.** With ATen (hipBLASLt) as the baseline, FlyDSL improves all 18
@@ -332,7 +416,7 @@ model-concurrency combinations: **1.40x–2.03x** for Qwen3-32B,
 
 ![MXFP8 A8W8 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-mxfp8-results.png)
 
-*Figure 13. MXFP8 A8W8 whole-request speedup on one MI355X. The baseline is
+*Figure 16. MXFP8 A8W8 whole-request speedup on one MI355X. The baseline is
 ATen; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 **MXFP4 A4W4.** With `lm_head` left unquantized, all 18 combinations also
@@ -343,7 +427,7 @@ variance-qualified results.
 
 ![MXFP4 A4W4 vLLM whole-request speedup across three models and six concurrency levels](_static/flydsl-pytorch-backend/flydsl-vllm-mxfp4-results.png)
 
-*Figure 14. MXFP4 A4W4 whole-request speedup on one MI355X. The baseline is
+*Figure 17. MXFP4 A4W4 whole-request speedup on one MI355X. The baseline is
 ATen; the treatment adds FlyDSL. Values above 1x favor FlyDSL.*
 
 ## Try It in PyTorch
@@ -451,6 +535,27 @@ The same `pn.flydsl.disabled()` context manager applies to eligible
 `torch.topk` calls. Actual dispatch depends on the operation's shape, dtype, and
 layout.
 
+### Attention
+
+SDPA needs no FlyDSL package or configuration. It only needs a PyTorch
+build linked against AOTriton 0.14.2b or later, which bundles the precompiled
+kernels:
+
+```python
+import torch
+import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
+
+q, k, v = (torch.randn(4, 16, 4096, 128, device="cuda", dtype=torch.bfloat16,
+                       requires_grad=True) for _ in range(3))
+
+with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+out.sum().backward()
+```
+
+AOTriton chooses FlyDSL or another kernel for each workload.
+
 ## What's Next
 
 The next steps extend the range of workloads that can benefit from FlyDSL:
@@ -459,6 +564,13 @@ The next steps extend the range of workloads that can benefit from FlyDSL:
   kernel set to AMD Instinct MI450 Series GPUs.
 - **More low-precision workloads and attention:** add MXFP8 grouped GEMM and
   FlexAttention kernels for more inference workloads.
+- **Attention in FlyDSL itself:** move the AOTriton attention kernels
+  into FlyDSL's `kernels/attention/`, so AOTriton builds them from upstream
+  instead of a vendored copy. Also add sequence-length-aware attention
+  schedules.
+- **FlexAttention with FlyDSL:** add a FlyDSL backend for
+  `torch.nn.attention.flex_attention` under `torch.compile`, alongside
+  Inductor's Triton kernels.
 - **Fusion and training:** support GEMM epilogue fusion and broader backward
   coverage.
 - **Deployment and validation:** add AOTInductor support and expand end-to-end
@@ -471,7 +583,9 @@ performance results presented here.
 
 The current integration connects FlyDSL kernel development to both eager
 operators and compiled GEMMs, giving PyTorch users a practical way to benefit
-from optimized AMD kernels. The vLLM results show how those kernel choices can
+from optimized AMD kernels.
+Through AOTriton, it also reaches `F.scaled_dot_product_attention`
+without any user-side changes. The vLLM results show how those kernel choices can
 translate into model-level gains, particularly for low-precision MXFP8 and
 MXFP4 workloads. Try it on your workloads and share results or feature requests
 through the
