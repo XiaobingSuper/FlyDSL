@@ -1,5 +1,9 @@
 # Accelerating PyTorch on AMD GPUs with FlyDSL
 
+*AMD: Xiaobing Zhang, Yutao Xu, Rui Li, Heng Yi, Xinya Zhang, Sixie Fang,
+Felix Li, Jeff Daily, Jiong Gong, Hattie Wu, Peng Sun, Emad Barsoum; META:
+Jason Ansel and Simon Layton*
+
 PyTorch users on AMD MI350-series GPUs can now use
 [FlyDSL](https://github.com/ROCm/FlyDSL) through existing operator APIs for
 dense and grouped GEMM,
