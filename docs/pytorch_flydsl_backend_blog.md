@@ -364,14 +364,14 @@ forward's LDS transpose read (`ds_read_b64_tr_b16`). In dQ, each of the three
 GEMMs matches one the forward already emits. The K tile is staged once and read
 in both orientations, which keeps head dimension 512 within LDS.
 
-![Dual-wave attention pipeline: within a wave, QK and PV on the matrix cores overlap the softmax of a neighbouring KV tile on the vector units; two wave groups alternate between loading K and V and computing, one phase apart.](_static/flydsl-pytorch-backend/flydsl-attention-dualwave-pipeline.svg)
+![Dual-wave attention pipeline: within a wave, QK and PV on the matrix cores overlap the softmax of a neighbouring KV tile on the vector units; two wave groups alternate between loading K and V and computing, one phase apart.](_static/flydsl-pytorch-backend/flydsl-attention-dualwave-pipeline.png)
 
 *Figure 12. Dual-wave forward pipeline for head dimensions up to 256. Within a
 wave, each matrix-core step overlaps the softmax of a neighbouring KV tile;
 across the workgroup, two wave groups run one phase apart, so one group loads K
 and V while the other computes.*
 
-![Wide-head attention at head dimension 512: K and V tiles are staged through LDS in two halves, two waves split the output columns of each Q tile, and every load overlaps an earlier multiply.](_static/flydsl-pytorch-backend/flydsl-attention-wide-head.svg)
+![Wide-head attention at head dimension 512: K and V tiles are staged through LDS in two halves, two waves split the output columns of each Q tile, and every load overlaps an earlier multiply.](_static/flydsl-pytorch-backend/flydsl-attention-wide-head.png)
 
 *Figure 13. Wide-head forward body at head dimension 512. K and V are staged
 through two LDS buffers in halves of 256 columns, and two waves compute the same
