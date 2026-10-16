@@ -1,6 +1,6 @@
 # Accelerating PyTorch on AMD GPUs with FlyDSL
 
-*AMD: Xiaobing Zhang, Yutao Xu, Rui Li, Heng Yi, Xinya Zhang, Sixie Fang,
+*AMD: Xiaobing Zhang, Yutao Xu, Rui Li, Heng Yi, Xinya Zhang, Shijie Feng,
 Felix Li, Jeff Daily, Jiong Gong, Hattie Wu, Peng Sun, Emad Barsoum; META:
 Jason Ansel and Simon Layton*
 
