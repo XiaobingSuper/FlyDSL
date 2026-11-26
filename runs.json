@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "updated": "2026-11-25T19:22:34Z",
+ "updated": "2026-11-26T01:52:54Z",
  "repo": "XiaobingSuper/FlyDSL",
  "runs": [
   {
@@ -10,11 +10,11 @@
    "branch": "main",
    "event": "push",
    "title": "[Test] Bench gfx1250 FP8/FP4 GEMM per launch batch; add trig/uniform \u2026",
-   "status": "queued",
-   "conclusion": null,
+   "status": "completed",
+   "conclusion": "cancelled",
    "url": "https://github.com/XiaobingSuper/FlyDSL/actions/runs/45528824307",
    "created_at": "2026-11-25T01:51:47Z",
-   "updated_at": "2026-11-25T01:52:33Z",
+   "updated_at": "2026-11-26T01:52:34Z",
    "actor": "XiaobingSuper",
    "jobs": []
   },
